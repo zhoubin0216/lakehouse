@@ -1,4 +1,4 @@
-from src.pipeline import load_config
+from src.common import load_config
 
 
 def test_config_loads() -> None:
