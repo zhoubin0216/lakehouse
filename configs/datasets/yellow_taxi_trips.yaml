@@ -1,0 +1,28 @@
+dataset_name: yellow_taxi_trips
+format: parquet
+source_path: data/raw/yellow_taxi_trips
+bronze_table: bronze_yellow_taxi_trips
+silver_table: silver_yellow_taxi_trips
+primary_key: null
+
+timestamp_columns:
+  pickup_timestamp: tpep_pickup_datetime
+  dropoff_timestamp: tpep_dropoff_datetime
+
+column_mapping:
+  VendorID: vendor_id
+  tpep_pickup_datetime: pickup_timestamp
+  tpep_dropoff_datetime: dropoff_timestamp
+  passenger_count: passenger_count
+  trip_distance: trip_distance
+  RatecodeID: ratecode_id
+  store_and_fwd_flag: store_and_fwd_flag
+  PULocationID: pickup_location_id
+  DOLocationID: dropoff_location_id
+  payment_type: payment_type
+  fare_amount: fare_amount
+  total_amount: total_amount
+
+partition_columns:
+  - pickup_year
+  - pickup_month

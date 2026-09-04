@@ -1,0 +1,10 @@
+project_name: urban_data_lakehouse
+warehouse_root: data/lakehouse
+metadata_root: data/metadata
+
+layers:
+  bronze: data/lakehouse/bronze
+  silver: data/lakehouse/silver
+  gold: data/lakehouse/gold
+
+default_write_mode: overwrite

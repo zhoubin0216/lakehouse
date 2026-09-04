@@ -1,0 +1,15 @@
+dataset_name: taxi_zone_lookup
+format: csv
+source_path: data/raw/taxi_zone_lookup.csv
+bronze_table: bronze_taxi_zone_lookup
+silver_table: dim_taxi_zone
+primary_key:
+  - LocationID
+
+column_mapping:
+  LocationID: location_id
+  Borough: borough
+  Zone: zone
+  service_zone: service_zone
+
+partition_columns: []

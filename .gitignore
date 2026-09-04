@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+
+# Local data and generated lakehouse tables can be very large.
+data/raw/
+data/lakehouse/
+data/metadata/
+
+# Runtime outputs
+logs/
+tmp/
+*.log
+
+# macOS
+.DS_Store
