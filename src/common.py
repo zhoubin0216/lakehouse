@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import os
 from pathlib import Path
 from typing import Callable, TypeVar
 
@@ -10,6 +11,7 @@ from pyspark.sql import DataFrame, SparkSession
 
 
 CONFIG_PATH = Path("configs/config.yaml")
+DEFAULT_JAVA_HOME = Path("/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home")
 T = TypeVar("T")
 
 
@@ -19,6 +21,7 @@ def load_config(path: Path = CONFIG_PATH) -> dict:
 
 
 def create_spark() -> SparkSession:
+    configure_java_home()
     builder = (
         SparkSession.builder.appName("week1-lakehouse")
         .master("local[*]")
@@ -26,6 +29,16 @@ def create_spark() -> SparkSession:
         .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
     )
     return configure_spark_with_delta_pip(builder).getOrCreate()
+
+
+def configure_java_home() -> None:
+    if os.environ.get("JAVA_HOME"):
+        return
+    if not DEFAULT_JAVA_HOME.exists():
+        return
+
+    os.environ["JAVA_HOME"] = str(DEFAULT_JAVA_HOME)
+    os.environ["PATH"] = f"{DEFAULT_JAVA_HOME / 'bin'}:{os.environ.get('PATH', '')}"
 
 
 def raw_path(config: dict, dataset: dict) -> str:
