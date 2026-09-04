@@ -1,8 +1,8 @@
-# Urban Data Lakehouse Platform
+# Week 1 Urban Data Lakehouse
 
 Course project for ID2221 Week 1: build a reusable urban data integration platform.
 
-## Platform
+## Minimal Platform
 
 - Python
 - PySpark
@@ -13,11 +13,12 @@ Course project for ID2221 Week 1: build a reusable urban data integration platfo
 ## Project Layout
 
 ```text
-configs/          Dataset and platform configuration
-src/              Source code for ingestion, transformation, integration, and benchmark
-tests/            Unit tests
-docs/             Design report, benchmark report, and architecture diagram
-data/             Local raw data and generated Delta tables, ignored by Git
+configs/config.yaml     Dataset and storage configuration
+src/pipeline.py         Bronze, silver, and gold pipeline
+src/benchmark.py        Task 6 storage strategy benchmark
+tests/                  Lightweight tests
+docs/report_notes.md    Notes for the final report
+data/                   Raw data and generated Delta tables, ignored by Git
 ```
 
 ## Setup
@@ -31,9 +32,24 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python -m src.pipelines.ingest_all
-python -m src.pipelines.build_integrated
-python -m src.benchmark.run_benchmark
+python -m src.pipeline bronze
+python -m src.pipeline silver
+python -m src.pipeline gold
+python -m src.benchmark
 ```
 
-The pipeline expects raw datasets under `data/raw/`.
+Or run the whole main pipeline:
+
+```bash
+python -m src.pipeline all
+```
+
+The pipeline expects raw datasets under:
+
+```text
+data/raw/
+  yellow_taxi_trips/
+  taxi_zone_lookup.csv
+  weather.csv
+  air_quality/hourly_88101_2024.csv
+```

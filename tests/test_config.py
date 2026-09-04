@@ -1,8 +1,7 @@
-from pathlib import Path
-
-from src.utils.config import load_yaml
+from src.pipeline import load_config
 
 
-def test_platform_config_loads() -> None:
-    config = load_yaml(Path("configs/platform.yaml"))
-    assert config["project_name"] == "urban_data_lakehouse"
+def test_config_loads() -> None:
+    config = load_config()
+    assert "datasets" in config
+    assert "yellow_taxi_trips" in config["datasets"]
