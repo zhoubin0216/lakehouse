@@ -15,6 +15,7 @@ Course project for ID2221 Week 1: build a reusable urban data integration platfo
 ```text
 configs/config.yaml     Dataset and storage configuration
 src/pipeline.py         Thin command-line entrypoint
+src/view_table.py       Delta table preview helper for PyCharm/terminal
 src/common.py           Shared config, Spark, Delta IO, and timing helpers
 src/data_consumption/   数据消费：source files -> raw Delta tables
 src/data_cleaning/      数据清洗转化：raw -> normal Delta tables
@@ -25,6 +26,10 @@ tests/                  Lightweight tests
 docs/report_notes.md    Notes for the final report
 data/                   Raw data and generated Delta tables, ignored by Git
 ```
+
+The data consumption step uses a source file registry. It tracks file path, size,
+modified time, optional checksum, and ingestion status so interrupted runs can
+restart without blindly re-consuming unchanged files.
 
 ## Setup
 
@@ -50,14 +55,31 @@ Or run the whole main pipeline:
 python -m src.pipeline all
 ```
 
+## View Delta Tables
+
+Use this helper instead of opening Delta table `part-*.parquet` files directly.
+It reads the current Delta snapshot through `_delta_log`.
+
+```bash
+python -m src.view_table yellow_taxi_trips --layer raw --limit 10
+python -m src.view_table raw/taxi_zone_lookup --limit 10
+python -m src.view_table raw/yellow_taxi_trips --columns _dataset_name,_source_file,_source_file_size,_record_hash --limit 10
+```
+
+For large tables, skip the full row count:
+
+```bash
+python -m src.view_table raw/yellow_taxi_trips --limit 20 --no-count
+```
+
 The pipeline expects raw datasets under:
 
 ```text
 data/raw/
-  yellow_taxi_trips/
+  yellow_tripdata_2024-*.parquet
   taxi_zone_lookup.csv
   weather.csv
-  air_quality/hourly_88101_2024.csv
+  hourly_88101_2024.csv
 ```
 
 Generated Delta tables are written under:

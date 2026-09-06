@@ -15,6 +15,15 @@ Use this file as the shared source for the final 3-5 page design report.
 - Normal: standardized and quality-checked Delta tables.
 - Integrated: joined analysis-ready Delta tables.
 
+## Data Consumption
+
+- Use source file registry instead of only recording consumed file names.
+- Track each source file by path, size, modification time, optional checksum, and ingestion status.
+- Add lineage columns to raw tables: `_source_file`, `_source_file_size`, `_source_modified_time`, `_ingestion_run_id`, `_ingestion_timestamp`, `_record_hash`.
+- Consume only new or changed files.
+- Write raw Delta data first, then update registry and ingestion metadata after the write succeeds.
+- Deduplicate raw records using `_record_hash` or dataset business keys to reduce duplicate ingestion after retries.
+
 ## Common Data Model
 
 - Lowercase snake_case column names.
