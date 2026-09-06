@@ -1,0 +1,172 @@
+paths:
+  raw: data/raw
+  lakehouse: data/lakehouse
+  metadata: data/metadata
+  source_file_registry: data/metadata/source_file_registry
+  ingestion_runs: data/metadata/ingestion_runs
+
+data_consumption:
+  sample_limit: null
+  write_mode: append
+  deduplicate_records: false
+  checksum_max_bytes: 10485760
+
+datasets:
+  yellow_taxi_trips:
+    format: parquet
+    ingestion_mode: incremental
+    source: yellow_tripdata_2024-*.parquet
+    raw_table: raw/yellow_taxi_trips
+    normal_table: normal/yellow_taxi_trips
+    timestamp: pickup_timestamp
+    partitions: [pickup_year, pickup_month]
+    expected_columns:
+      - VendorID
+      - tpep_pickup_datetime
+      - tpep_dropoff_datetime
+      - passenger_count
+      - trip_distance
+      - RatecodeID
+      - store_and_fwd_flag
+      - PULocationID
+      - DOLocationID
+      - payment_type
+      - fare_amount
+      - extra
+      - mta_tax
+      - tip_amount
+      - tolls_amount
+      - improvement_surcharge
+      - total_amount
+      - congestion_surcharge
+      - Airport_fee
+    columns:
+      VendorID: vendor_id
+      tpep_pickup_datetime: pickup_timestamp
+      tpep_dropoff_datetime: dropoff_timestamp
+      passenger_count: passenger_count
+      trip_distance: trip_distance
+      RatecodeID: ratecode_id
+      store_and_fwd_flag: store_and_fwd_flag
+      PULocationID: pickup_location_id
+      DOLocationID: dropoff_location_id
+      payment_type: payment_type
+      fare_amount: fare_amount
+      total_amount: total_amount
+      congestion_surcharge: congestion_surcharge
+      Airport_fee: airport_fee
+
+  taxi_zone_lookup:
+    format: csv
+    ingestion_mode: incremental
+    source: taxi_zone_lookup.csv
+    read_options:
+      header: true
+      inferSchema: true
+    raw_table: raw/taxi_zone_lookup
+    normal_table: normal/dim_taxi_zone
+    primary_key: [location_id]
+    partitions: []
+    expected_columns:
+      - LocationID
+      - Borough
+      - Zone
+      - service_zone
+    columns:
+      LocationID: location_id
+      Borough: borough
+      Zone: zone
+      service_zone: service_zone
+
+  weather_hourly:
+    format: csv
+    ingestion_mode: incremental
+    source: weather.csv
+    read_options:
+      header: true
+      inferSchema: true
+    raw_table: raw/weather_hourly
+    normal_table: normal/weather_hourly
+    timestamp: event_timestamp
+    primary_key: [year, month, day, hour]
+    partitions: []
+    expected_columns:
+      - year
+      - month
+      - day
+      - hour
+      - temp
+      - temp_source
+      - rhum
+      - rhum_source
+      - prcp
+      - prcp_source
+      - snwd
+      - snwd_source
+      - wdir
+      - wdir_source
+      - wspd
+      - wspd_source
+      - wpgt
+      - wpgt_source
+      - pres
+      - pres_source
+      - cldc
+      - cldc_source
+      - coco
+      - coco_source
+    columns: {}
+
+  air_quality:
+    format: csv
+    ingestion_mode: incremental
+    source: hourly_88101_2024.csv
+    read_options:
+      header: true
+      inferSchema: true
+    raw_table: raw/air_quality
+    normal_table: normal/air_quality_hourly
+    timestamp: event_timestamp
+    partitions: [event_year, event_month]
+    expected_columns:
+      - State Code
+      - County Code
+      - Site Num
+      - Parameter Code
+      - POC
+      - Latitude
+      - Longitude
+      - Datum
+      - Parameter Name
+      - Date Local
+      - Time Local
+      - Date GMT
+      - Time GMT
+      - Sample Measurement
+      - Units of Measure
+      - MDL
+      - Uncertainty
+      - Qualifier
+      - Method Type
+      - Method Code
+      - Method Name
+      - State Name
+      - County Name
+      - Date of Last Change
+    columns:
+      State Code: state_code
+      County Code: county_code
+      Site Num: site_num
+      Parameter Code: parameter_code
+      POC: poc
+      Latitude: latitude
+      Longitude: longitude
+      Parameter Name: parameter_name
+      Date Local: date_local
+      Time Local: time_local
+      Date GMT: date_gmt
+      Time GMT: time_gmt
+      Sample Measurement: sample_measurement
+      Units of Measure: units_of_measure
+      State Name: state_name
+      County Name: county_name
