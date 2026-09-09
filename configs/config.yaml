@@ -11,8 +11,17 @@ data_consumption:
   deduplicate_records: false
   checksum_max_bytes: 10485760
 
+data_integration:
+  integrated_taxi_trips_table: integrated/integrated_taxi_trips
+  partitions: [pickup_year, pickup_month]
+
 datasets:
   yellow_taxi_trips:
+    quality_rules:
+      pickup_start: "2024-01-01 00:00:00"
+      pickup_end_exclusive: "2024-04-01 00:00:00"
+      max_trip_duration_seconds: 86400
+      max_trip_distance: 500.0
     format: parquet
     ingestion_mode: incremental
     source: yellow_tripdata_2024-*.parquet
