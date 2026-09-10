@@ -144,3 +144,58 @@ Run the tests with:
 ```bash
 pytest -q
 ```
+
+## Task C: Data Aggregation and Benchmarking
+
+Task C builds analytical summary tables from `integrated_taxi_trips` and
+benchmarks different Delta Lake storage strategies for the taxi-trip data.
+
+The aggregation pipeline creates three Delta summary tables:
+
+- number of taxi trips per pickup borough,
+- average trip duration per pickup date,
+- average fare amount per pickup borough.
+
+Run the aggregation step with:
+
+```bash
+python -m src.pipeline aggregate
+```
+
+The benchmark compares four Delta storage strategies using the same taxi-trip
+dataset:
+
+- unpartitioned,
+- partitioned by `pickup_borough`,
+- partitioned by `pickup_month`,
+- partitioned by `pickup_date`.
+
+For each strategy, the benchmark measures Delta write/ingestion time, storage size,
+generated file count, and query latency. Each strategy is written three times,
+and the median write time is used for comparison. Each required query is run
+once as a warm-up and then five times for measurement, with the median latency
+reported.
+
+The benchmark executes the following required queries:
+
+- number of taxi trips per pickup borough,
+- average trip duration per pickup date,
+- average fare amount per pickup borough.
+
+Run the benchmark with:
+
+```bash
+python -m src.pipeline benchmark
+```
+
+The generated benchmark Delta tables are written under:
+
+```text
+data/lakehouse/benchmark/
+  taxi_unpartitioned/
+  taxi_by_pickup_borough/
+  taxi_by_pickup_month/
+  taxi_by_pickup_date/
+```
+
+Benchmark statistics are saved to the configured CSV result file(data/lakehouse/benchmark/benchmark_results.csv).

@@ -15,6 +15,11 @@ data_integration:
   integrated_taxi_trips_table: integrated/integrated_taxi_trips
   partitions: [pickup_year, pickup_month]
 
+data_aggregation:
+  trips_per_borough_table: aggregate/trips_per_borough
+  avg_trip_duration_per_day_table: aggregate/avg_trip_duration_per_day
+  avg_fare_per_borough_table: aggregate/avg_fare_per_borough
+
 datasets:
   yellow_taxi_trips:
     quality_rules:
@@ -179,3 +184,15 @@ datasets:
       Units of Measure: units_of_measure
       State Name: state_name
       County Name: county_name
+
+benchmark:
+  unpartitioned_table: benchmark/taxi_unpartitioned
+  borough_partitioned_table: benchmark/taxi_by_pickup_borough
+  month_partitioned_table: benchmark/taxi_by_pickup_month
+  date_partitioned_table: benchmark/taxi_by_pickup_date
+
+  results_file: benchmark/benchmark_results.csv
+
+  write_runs: 3
+  warmup_runs: 1
+  measured_runs: 5
