@@ -92,3 +92,124 @@ data/lakehouse/
   aggregate/    Aggregated summary tables
   benchmark/    Tables used for storage strategy comparison
 ```
+
+## Data Cleaning and Integration
+
+This step transforms the raw Delta tables into standardized normal tables and
+builds the analysis-ready `integrated_taxi_trips` table.
+
+The normal-table pipeline:
+
+- validates non-null and unique primary keys for lookup and hourly tables,
+- standardizes timestamps as local `timestamp_ntz` values,
+- normalizes measurement types and replaces invalid measurements with nulls,
+- removes taxi trips with invalid durations or timestamps outside Q1 2024,
+- deduplicates taxi trips using the ingestion record hash,
+- flags zero-distance trips, invalid distances, and financial adjustments,
+- aggregates valid NYC PM2.5 observations into one city-level value per hour.
+
+The integration pipeline enriches every retained taxi trip with:
+
+- pickup and dropoff zones,
+- pickup and dropoff boroughs,
+- weather conditions at the pickup hour,
+- average NYC PM2.5 at the pickup hour.
+
+All enrichment steps use left joins so trips remain available when contextual
+data is missing. Taxi zones, weather, and hourly air-quality data are broadcast
+during integration because they are small relative to the taxi-trip fact table.
+
+Run this step with:
+
+```bash
+python -m src.pipeline normal
+python -m src.pipeline integrated
+```
+
+Preview the outputs with:
+
+```bash
+python -m src.view_table normal/weather_hourly --limit 10
+python -m src.view_table normal/air_quality_hourly --limit 10
+python -m src.view_table integrated/integrated_taxi_trips --limit 10 --no-count
+```
+
+The current Q1 2024 run retains 9,551,387 cleaned taxi trips. The integrated
+table has the same row count, with complete pickup-zone, dropoff-zone, weather,
+and air-quality coverage. Unit tests cover primary-key validation, timestamp
+normalization, hourly air-quality aggregation, and left-join preservation.
+
+Run the tests with:
+
+```bash
+pytest -q
+```
+
+## Data Aggregation and Benchmarking
+
+This step builds analytical summary tables from `integrated_taxi_trips` and
+benchmarks different Delta Lake storage strategies for the taxi-trip data.
+
+The aggregation pipeline creates three Delta summary tables:
+
+- number of taxi trips per pickup borough,
+- average trip duration per pickup date,
+- average fare amount per pickup borough.
+
+Run the aggregation step with:
+
+```bash
+python -m src.pipeline aggregate
+```
+
+The benchmark compares four main Delta storage strategies using the same taxi-trip
+dataset:
+
+- unpartitioned,
+- partitioned by `pickup_borough`,
+- partitioned by `pickup_month`,
+- partitioned by `pickup_date`.
+
+Three additional random file-count control strategies are also evaluated:
+
+- random partitioning into 20 files,
+- random partitioning into 128 files,
+- random partitioning into 608 files.
+
+These controls match the Parquet file counts produced by the `pickup_month`,
+`pickup_borough`, and `pickup_date` strategies respectively, allowing the effect
+of file count to be compared independently from the semantic partitioning column.
+
+For each strategy, the benchmark measures Delta write/ingestion time, storage size,
+generated file count, and query latency. Each strategy is written three times,
+and the median write time is used for comparison. Each required query is run
+once as a warm-up and then five times for measurement, with the median latency
+reported.
+
+The benchmark executes the following required queries:
+
+- number of taxi trips per pickup borough,
+- average trip duration per pickup date,
+- average fare amount per pickup borough.
+
+Run the benchmark with:
+
+```bash
+python -m src.pipeline benchmark
+```
+
+The generated benchmark Delta tables are written under:
+
+```text
+data/lakehouse/benchmark/
+  taxi_unpartitioned/
+  taxi_by_pickup_borough/
+  taxi_by_pickup_month/
+  taxi_by_pickup_date/
+  taxi_random_20_files/
+  taxi_random_128_files/
+  taxi_random_608_files/
+```
+
+Benchmark statistics are saved to the configured CSV result file
+(`data/lakehouse/benchmark/benchmark_results.csv`).
