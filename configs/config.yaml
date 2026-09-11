@@ -191,6 +191,17 @@ benchmark:
   month_partitioned_table: benchmark/taxi_by_pickup_month
   date_partitioned_table: benchmark/taxi_by_pickup_date
 
+  # Random file-count control strategies. These use pseudo-random bucket
+  # partitioning with target Parquet file counts matching the final results
+  # of pickup_borough (128), pickup_month (20), and pickup_date (608).
+  random_borough_table: benchmark/taxi_random_128_files
+  random_month_table: benchmark/taxi_random_20_files
+  random_date_table: benchmark/taxi_random_608_files
+
+  random_borough_file_count: 128
+  random_month_file_count: 20
+  random_date_file_count: 608
+
   results_file: benchmark/benchmark_results.csv
 
   write_runs: 3

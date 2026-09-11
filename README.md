@@ -152,9 +152,9 @@ benchmarks different Delta Lake storage strategies for the taxi-trip data.
 
 The aggregation pipeline creates three Delta summary tables:
 
-- number of taxi trips per pickup borough,
-- average trip duration per pickup date,
-- average fare amount per pickup borough.
+* number of taxi trips per pickup borough,
+* average trip duration per pickup date,
+* average fare amount per pickup borough.
 
 Run the aggregation step with:
 
@@ -162,13 +162,23 @@ Run the aggregation step with:
 python -m src.pipeline aggregate
 ```
 
-The benchmark compares four Delta storage strategies using the same taxi-trip
+The benchmark compares four main Delta storage strategies using the same taxi-trip
 dataset:
 
-- unpartitioned,
-- partitioned by `pickup_borough`,
-- partitioned by `pickup_month`,
-- partitioned by `pickup_date`.
+* unpartitioned,
+* partitioned by `pickup_borough`,
+* partitioned by `pickup_month`,
+* partitioned by `pickup_date`.
+
+Three additional random file-count control strategies are also evaluated:
+
+* random partitioning into 20 files,
+* random partitioning into 128 files,
+* random partitioning into 608 files.
+
+These controls match the Parquet file counts produced by the `pickup_month`,
+`pickup_borough`, and `pickup_date` strategies respectively, allowing the effect
+of file count to be compared independently from the semantic partitioning column.
 
 For each strategy, the benchmark measures Delta write/ingestion time, storage size,
 generated file count, and query latency. Each strategy is written three times,
@@ -178,9 +188,9 @@ reported.
 
 The benchmark executes the following required queries:
 
-- number of taxi trips per pickup borough,
-- average trip duration per pickup date,
-- average fare amount per pickup borough.
+* number of taxi trips per pickup borough,
+* average trip duration per pickup date,
+* average fare amount per pickup borough.
 
 Run the benchmark with:
 
@@ -196,6 +206,10 @@ data/lakehouse/benchmark/
   taxi_by_pickup_borough/
   taxi_by_pickup_month/
   taxi_by_pickup_date/
+  taxi_random_20_files/
+  taxi_random_128_files/
+  taxi_random_608_files/
 ```
 
-Benchmark statistics are saved to the configured CSV result file(data/lakehouse/benchmark/benchmark_results.csv).
+Benchmark statistics are saved to the configured CSV result file
+(`data/lakehouse/benchmark/benchmark_results.csv`).

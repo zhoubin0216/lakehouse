@@ -110,6 +110,39 @@ def query_avg_fare_per_borough(
 
 
 # =========================================================
+# Random file-count control strategies
+# =========================================================
+
+def add_random_bucket(
+    df: DataFrame,
+    column_name: str,
+    bucket_count: int,
+    seed: int,
+) -> DataFrame:
+    """
+    Add a deterministic pseudo-random bucket column.
+
+    These buckets are used as control strategies so that we can compare
+    semantic partitioning with a random layout that has the same target
+    number of Parquet data files. Using a hash instead of rand() keeps the
+    assignment stable across repeated benchmark runs.
+    """
+    if bucket_count <= 0:
+        raise ValueError("bucket_count must be positive")
+
+    return df.withColumn(
+        column_name,
+        F.pmod(
+            F.xxhash64(
+                F.col("trip_id"),
+                F.lit(seed),
+            ),
+            F.lit(bucket_count),
+        ).cast("int"),
+    )
+
+
+# =========================================================
 # File / directory helpers
 # =========================================================
 
@@ -144,6 +177,8 @@ def measure_write(
     output_path: str,
     partitions: list[str] | None,
     runs: int = 3,
+    repartition_count: int | None = None,
+    repartition_columns: list[str] | None = None,
 ) -> dict:
     """
     Write the same Delta table multiple times.
@@ -159,8 +194,27 @@ def measure_write(
 
         started = time.perf_counter()
 
+        write_df = df
+
+        # Random control strategies explicitly repartition by their bucket
+        # column so that one bucket is written by one Spark partition. This
+        # makes the number of Parquet data files directly comparable with
+        # the target file count from the corresponding semantic strategy.
+        if repartition_count is not None:
+            columns = repartition_columns or []
+            if not columns:
+                raise ValueError(
+                    "repartition_columns are required when "
+                    "repartition_count is set"
+                )
+
+            write_df = write_df.repartition(
+                repartition_count,
+                *[F.col(column) for column in columns],
+            )
+
         write_delta(
-            df,
+            write_df,
             output_path,
             partitions=partitions,
         )
@@ -297,6 +351,49 @@ def run_benchmark(
     )
 
     # -----------------------------------------------------
+    # Random file-count controls
+    # -----------------------------------------------------
+
+    # These target counts come from the final benchmark results of the
+    # corresponding semantic partitioning strategies. They are configurable
+    # so the controls can easily be updated if the dataset changes.
+    random_borough_file_count = benchmark_config.get(
+        "random_borough_file_count",
+        128,
+    )
+    random_month_file_count = benchmark_config.get(
+        "random_month_file_count",
+        20,
+    )
+    random_date_file_count = benchmark_config.get(
+        "random_date_file_count",
+        608,
+    )
+
+    random_borough_column = "random_bucket_128"
+    random_month_column = "random_bucket_20"
+    random_date_column = "random_bucket_608"
+
+    random_borough_df = add_random_bucket(
+        benchmark_df,
+        random_borough_column,
+        random_borough_file_count,
+        seed=101,
+    )
+    random_month_df = add_random_bucket(
+        benchmark_df,
+        random_month_column,
+        random_month_file_count,
+        seed=202,
+    )
+    random_date_df = add_random_bucket(
+        benchmark_df,
+        random_date_column,
+        random_date_file_count,
+        seed=303,
+    )
+
+    # -----------------------------------------------------
     # Storage strategies
     # -----------------------------------------------------
 
@@ -305,24 +402,66 @@ def run_benchmark(
             "table":
                 benchmark_config["unpartitioned_table"],
             "partitions": None,
+            "dataframe": benchmark_df,
+            "repartition_count": None,
+            "repartition_columns": None,
         },
 
         "pickup_borough": {
             "table":
                 benchmark_config["borough_partitioned_table"],
             "partitions": ["pickup_borough"],
+            "dataframe": benchmark_df,
+            "repartition_count": None,
+            "repartition_columns": None,
         },
 
         "pickup_month": {
             "table":
                 benchmark_config["month_partitioned_table"],
             "partitions": ["pickup_month"],
+            "dataframe": benchmark_df,
+            "repartition_count": None,
+            "repartition_columns": None,
         },
 
         "pickup_date": {
             "table":
                 benchmark_config["date_partitioned_table"],
             "partitions": ["pickup_date"],
+            "dataframe": benchmark_df,
+            "repartition_count": None,
+            "repartition_columns": None,
+        },
+
+        # Random controls: same target Parquet file counts as the three
+        # semantic partitioned strategies, but rows are assigned by a
+        # deterministic pseudo-random hash rather than a meaningful field.
+        "random_128_files": {
+            "table":
+                benchmark_config["random_borough_table"],
+            "partitions": [random_borough_column],
+            "dataframe": random_borough_df,
+            "repartition_count": random_borough_file_count,
+            "repartition_columns": [random_borough_column],
+        },
+
+        "random_20_files": {
+            "table":
+                benchmark_config["random_month_table"],
+            "partitions": [random_month_column],
+            "dataframe": random_month_df,
+            "repartition_count": random_month_file_count,
+            "repartition_columns": [random_month_column],
+        },
+
+        "random_608_files": {
+            "table":
+                benchmark_config["random_date_table"],
+            "partitions": [random_date_column],
+            "dataframe": random_date_df,
+            "repartition_count": random_date_file_count,
+            "repartition_columns": [random_date_column],
         },
     }
     # Only the three queries required by Task 6.
@@ -381,10 +520,12 @@ def run_benchmark(
         print("\nWrite benchmark:")
 
         write_metrics = measure_write(
-            benchmark_df,
+            strategy["dataframe"],
             output_path,
             strategy["partitions"],
             runs=write_runs,
+            repartition_count=strategy["repartition_count"],
+            repartition_columns=strategy["repartition_columns"],
         )
 
         print(
