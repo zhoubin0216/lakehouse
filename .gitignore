@@ -5,6 +5,7 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .idea/
+.vscode/
 
 # Local data and generated lakehouse tables can be very large.
 data/raw/
