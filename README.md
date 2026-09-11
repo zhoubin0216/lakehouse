@@ -17,13 +17,14 @@ configs/config.yaml     Dataset and storage configuration
 src/pipeline.py         Thin command-line entrypoint
 src/view_table.py       Delta table preview helper for PyCharm/terminal
 src/common.py           Shared config, Spark, Delta IO, and timing helpers
-src/data_consumption/   数据消费：source files -> raw Delta tables
-src/data_cleaning/      数据清洗转化：raw -> normal Delta tables
-src/data_integration/   数据联表：normal -> integrated_taxi_trips
-src/data_aggregation/   数据聚合：integrated -> summary tables
-src/data_analysis/      数据分析：benchmark and result analysis
+src/data_consumption/   source files -> raw Delta tables
+src/data_cleaning/      raw -> normal Delta tables
+src/data_integration/   normal -> integrated_taxi_trips
+src/data_aggregation/   integrated -> summary tables
+src/data_analysis/      benchmark and result analysis
 tests/                  Lightweight tests
 docs/report_notes.md    Notes for the final report
+docs/architecture.md    Project architecture diagrams
 data/                   Raw data and generated Delta tables, ignored by Git
 ```
 
