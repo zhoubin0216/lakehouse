@@ -24,6 +24,7 @@ src/data_aggregation/   数据聚合：integrated -> summary tables
 src/data_analysis/      数据分析：benchmark and result analysis
 tests/                  Lightweight tests
 docs/report_notes.md    Notes for the final report
+docs/architecture.md    Project architecture diagrams
 data/                   Raw data and generated Delta tables, ignored by Git
 ```
 
