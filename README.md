@@ -93,9 +93,9 @@ data/lakehouse/
   benchmark/    Tables used for storage strategy comparison
 ```
 
-## Task B: Data Cleaning and Integration
+## Data Cleaning and Integration
 
-Task B transforms the raw Delta tables into standardized normal tables and
+This step transforms the raw Delta tables into standardized normal tables and
 builds the analysis-ready `integrated_taxi_trips` table.
 
 The normal-table pipeline:
@@ -119,7 +119,7 @@ All enrichment steps use left joins so trips remain available when contextual
 data is missing. Taxi zones, weather, and hourly air-quality data are broadcast
 during integration because they are small relative to the taxi-trip fact table.
 
-Run Task B with:
+Run this step with:
 
 ```bash
 python -m src.pipeline normal
@@ -145,16 +145,16 @@ Run the tests with:
 pytest -q
 ```
 
-## Task C: Data Aggregation and Benchmarking
+## Data Aggregation and Benchmarking
 
-Task C builds analytical summary tables from `integrated_taxi_trips` and
+This step builds analytical summary tables from `integrated_taxi_trips` and
 benchmarks different Delta Lake storage strategies for the taxi-trip data.
 
 The aggregation pipeline creates three Delta summary tables:
 
-* number of taxi trips per pickup borough,
-* average trip duration per pickup date,
-* average fare amount per pickup borough.
+- number of taxi trips per pickup borough,
+- average trip duration per pickup date,
+- average fare amount per pickup borough.
 
 Run the aggregation step with:
 
@@ -165,16 +165,16 @@ python -m src.pipeline aggregate
 The benchmark compares four main Delta storage strategies using the same taxi-trip
 dataset:
 
-* unpartitioned,
-* partitioned by `pickup_borough`,
-* partitioned by `pickup_month`,
-* partitioned by `pickup_date`.
+- unpartitioned,
+- partitioned by `pickup_borough`,
+- partitioned by `pickup_month`,
+- partitioned by `pickup_date`.
 
 Three additional random file-count control strategies are also evaluated:
 
-* random partitioning into 20 files,
-* random partitioning into 128 files,
-* random partitioning into 608 files.
+- random partitioning into 20 files,
+- random partitioning into 128 files,
+- random partitioning into 608 files.
 
 These controls match the Parquet file counts produced by the `pickup_month`,
 `pickup_borough`, and `pickup_date` strategies respectively, allowing the effect
@@ -188,9 +188,9 @@ reported.
 
 The benchmark executes the following required queries:
 
-* number of taxi trips per pickup borough,
-* average trip duration per pickup date,
-* average fare amount per pickup borough.
+- number of taxi trips per pickup borough,
+- average trip duration per pickup date,
+- average fare amount per pickup borough.
 
 Run the benchmark with:
 
