@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-def start_ingestion_run(dataset_name: str) -> dict:
+def start_ingestion_run(dataset_name: str, schema_version: int) -> dict:
     """Create an ingestion run metadata object."""
     return {
         "run_id": str(uuid.uuid4()),
         "dataset_name": dataset_name,
+        "schema_version": schema_version,
         "status": "running",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "started_monotonic": time.perf_counter(),

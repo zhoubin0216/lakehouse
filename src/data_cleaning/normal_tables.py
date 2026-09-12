@@ -1,7 +1,30 @@
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
 from src.common import read_delta, table_path, write_delta
+
+
+def latest_schema_records(df: DataFrame, key_columns: list[str]) -> DataFrame:
+    """Keep the newest schema/ingestion version for each raw business key."""
+    lineage_columns = ["_schema_version", "_ingestion_timestamp"]
+    missing_columns = [
+        column
+        for column in [*key_columns, *lineage_columns]
+        if column not in df.columns
+    ]
+    if missing_columns:
+        raise ValueError(f"Raw input is missing version lineage columns: {missing_columns}")
+
+    window = Window.partitionBy(*key_columns).orderBy(
+        F.col("_schema_version").desc(),
+        F.col("_ingestion_timestamp").desc_nulls_last(),
+    )
+    return (
+        df.withColumn("_schema_rank", F.row_number().over(window))
+        .filter(F.col("_schema_rank") == 1)
+        .drop("_schema_rank")
+    )
 
 
 def validate_primary_key(
@@ -42,11 +65,12 @@ def validate_primary_key(
 
 def clean_taxi_zones(df: DataFrame) -> DataFrame:
     """Create the standardized taxi-zone dimension table."""
-    selected = df.select(
+    selected = latest_schema_records(df, ["location_id"]).select(
         "location_id",
         "borough",
         "zone",
         "service_zone",
+        F.col("_schema_version").alias("source_schema_version"),
     )
 
     validate_primary_key(
@@ -73,7 +97,7 @@ def valid_or_null(
 
 def clean_weather(df: DataFrame) -> DataFrame:
     """Create one standardized weather observation per hour."""
-    selected = df.select(
+    selected = latest_schema_records(df, ["year", "month", "day", "hour"]).select(
         "year",
         "month",
         "day",
@@ -88,6 +112,7 @@ def clean_weather(df: DataFrame) -> DataFrame:
         F.col("pres").cast("double").alias("pressure_hpa"),
         F.col("cldc").cast("double").alias("cloud_cover_pct"),
         F.col("coco").cast("integer").alias("weather_condition_code"),
+        F.col("_schema_version").alias("source_schema_version"),
     )
 
     validate_primary_key(
@@ -165,6 +190,7 @@ def clean_weather(df: DataFrame) -> DataFrame:
         "pressure_hpa",
         "cloud_cover_pct",
         "weather_condition_code",
+        "source_schema_version",
     )
 
 
@@ -174,9 +200,20 @@ def clean_air_quality(df: DataFrame) -> DataFrame:
     expected_unit = "Micrograms/cubic meter (LC)"
 
     selected = (
-        df.filter(
-            (F.col("state_name") == "New York")
-            & F.col("county_name").isin(*nyc_counties)
+        latest_schema_records(
+            df.filter(
+                (F.col("state_name") == "New York")
+                & F.col("county_name").isin(*nyc_counties)
+            ),
+            [
+                "state_code",
+                "county_code",
+                "site_num",
+                "parameter_code",
+                "poc",
+                "date_local",
+                "time_local",
+            ],
         )
         .select(
             "county_code",
@@ -188,6 +225,7 @@ def clean_air_quality(df: DataFrame) -> DataFrame:
             .cast("double")
             .alias("pm25_ug_m3"),
             "units_of_measure",
+            "_schema_version",
         )
         .withColumn(
             "event_timestamp",
@@ -222,6 +260,9 @@ def clean_air_quality(df: DataFrame) -> DataFrame:
                 "county_code",
                 "site_num",
             ).alias("air_quality_site_count"),
+            F.sort_array(
+                F.collect_set("_schema_version")
+            ).alias("source_schema_versions"),
         )
         .withColumn(
             "event_timestamp",
@@ -251,6 +292,7 @@ def clean_air_quality(df: DataFrame) -> DataFrame:
         "pm25_max_ug_m3",
         "air_quality_observation_count",
         "air_quality_site_count",
+        "source_schema_versions",
         "event_year",
         "event_month",
     )
@@ -270,8 +312,9 @@ def clean_taxi_trips(
         "timestampdiff(SECOND, pickup_timestamp, dropoff_timestamp)"
     )
 
-    selected = df.select(
+    selected = latest_schema_records(df, ["_record_hash"]).select(
         F.col("_record_hash").alias("trip_id"),
+        F.col("_schema_version").alias("source_schema_version"),
         "vendor_id",
         "pickup_timestamp",
         "dropoff_timestamp",
@@ -311,7 +354,6 @@ def clean_taxi_trips(
             (F.col("trip_duration_seconds") > 0)
             & (F.col("trip_duration_seconds") <= max_duration)
         )
-        .dropDuplicates(["trip_id"])
     )
 
     return (
