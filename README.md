@@ -29,8 +29,36 @@ data/                   Raw data and generated Delta tables, ignored by Git
 ```
 
 The data consumption step uses a source file registry. It tracks file path, size,
-modified time, optional checksum, and ingestion status so interrupted runs can
-restart without blindly re-consuming unchanged files.
+modified time, optional checksum, schema version, and ingestion status so
+interrupted runs can restart without blindly re-consuming unchanged files.
+
+Each dataset declares a positive integer `current_schema_version` pointer and a
+`schema_versions` mapping in `configs/config.yaml`. The mapping preserves every
+source schema contract, while the pointer selects the contract used for new
+ingestion. Every newly consumed raw record stores the selected version in
+`_schema_version`; the same value is also stored in the ingestion-run metadata
+and the source-file registry. Increment the pointer only when the source schema
+contract or its interpretation changes.
+
+Changing `current_schema_version` does not itself re-consume unchanged source
+files or rewrite historical raw rows. Existing rows retain the version under
+which they were ingested, while new or changed files use the current version.
+Rebuilding history is a separate, explicit backfill operation.
+
+Version-specific source parsing and mapping settings are nested by version:
+
+```yaml
+current_schema_version: 2
+schema_versions:
+  "1":
+    format: csv
+    expected_columns: [old_name]
+    columns: {old_name: canonical_name}
+  "2":
+    format: csv
+    expected_columns: [new_name]
+    columns: {new_name: canonical_name}
+```
 
 ## Setup
 
@@ -64,7 +92,7 @@ It reads the current Delta snapshot through `_delta_log`.
 ```bash
 python -m src.view_table yellow_taxi_trips --layer raw --limit 10
 python -m src.view_table raw/taxi_zone_lookup --limit 10
-python -m src.view_table raw/yellow_taxi_trips --columns _dataset_name,_source_file,_source_file_size,_record_hash --limit 10
+python -m src.view_table raw/yellow_taxi_trips --columns _dataset_name,_schema_version,_source_file,_source_file_size,_record_hash --limit 10
 ```
 
 For large tables, skip the full row count:
@@ -101,6 +129,10 @@ builds the analysis-ready `integrated_taxi_trips` table.
 
 The normal-table pipeline:
 
+- resolves repeated business keys by preferring the highest source schema version
+  and then the latest ingestion timestamp,
+- preserves `source_schema_version` for one-record outputs and
+  `source_schema_versions` for hourly air-quality aggregates,
 - validates non-null and unique primary keys for lookup and hourly tables,
 - standardizes timestamps as local `timestamp_ntz` values,
 - normalizes measurement types and replaces invalid measurements with nulls,
@@ -115,6 +147,11 @@ The integration pipeline enriches every retained taxi trip with:
 - pickup and dropoff boroughs,
 - weather conditions at the pickup hour,
 - average NYC PM2.5 at the pickup hour.
+
+The integrated table keeps source-specific lineage instead of assigning one
+ambiguous global schema version: `taxi_schema_version`,
+`pickup_zone_schema_version`, `dropoff_zone_schema_version`,
+`weather_schema_version`, and `air_quality_schema_versions`.
 
 All enrichment steps use left joins so trips remain available when contextual
 data is missing. Taxi zones, weather, and hourly air-quality data are broadcast
@@ -213,4 +250,6 @@ data/lakehouse/benchmark/
 ```
 
 Benchmark statistics are saved to the configured CSV result file
-(`data/lakehouse/benchmark/benchmark_results.csv`).
+(`data/lakehouse/benchmark/benchmark_results.csv`). Each result row includes a
+`schema_versions` JSON snapshot. Benchmark Delta tables also retain the
+source-specific schema-version columns used by their input records.

@@ -12,7 +12,7 @@ flowchart LR
     end
 
     subgraph Config["Configuration"]
-        ConfigYaml["configs/config.yaml<br/>paths, schemas, column mappings,<br/>ingestion settings"]
+        ConfigYaml["configs/config.yaml<br/>current schema pointers, version history,<br/>column mappings and ingestion settings"]
     end
 
     subgraph Runtime["Local Runtime"]
@@ -30,16 +30,16 @@ flowchart LR
     end
 
     subgraph Metadata["Metadata"]
-        Registry["source_file_registry<br/>consumed file state"]
-        Runs["ingestion_runs<br/>run status and counts"]
+        Registry["source_file_registry<br/>file state and schema version"]
+        Runs["ingestion_runs<br/>status, counts, and schema version"]
     end
 
     subgraph Lakehouse["Local Delta Lakehouse"]
         Raw["data/lakehouse/raw<br/>raw Delta tables"]
-        Normal["data/lakehouse/normal<br/>cleaned Delta tables"]
-        Integrated["data/lakehouse/integrated<br/>analysis-ready wide tables"]
-        Aggregate["data/lakehouse/aggregate<br/>summary tables"]
-        Benchmark["data/lakehouse/benchmark<br/>storage strategy comparison"]
+        Normal["data/lakehouse/normal<br/>cleaned tables with source versions"]
+        Integrated["data/lakehouse/integrated<br/>wide tables with per-source versions"]
+        Aggregate["data/lakehouse/aggregate<br/>summaries with version sets"]
+        Benchmark["data/lakehouse/benchmark<br/>strategies and version snapshots"]
     end
 
     TaxiFiles --> Consumption
@@ -108,24 +108,29 @@ flowchart TD
 data/
   raw/                         Source files copied from the assignment dataset
   lakehouse/
-    raw/                       Delta tables produced by data consumption
+    raw/                       Delta tables with row-level schema-version lineage
     normal/                    Cleaned and standardized Delta tables
     integrated/                Joined analysis-ready Delta tables
     aggregate/                 Aggregated Delta tables
     benchmark/                 Tables for storage strategy comparison
   metadata/
-    source_file_registry/      File-level incremental ingestion state
-    ingestion_runs/            Per-run status, row counts, and errors
+    source_file_registry/      File state and last successful schema version
+    ingestion_runs/            Per-run status, schema version, counts, and errors
 ```
 
-## Current Week 1 Scope
+## Schema-Version Semantics
 
-The current implemented data path is:
+`current_schema_version` selects one definition from each dataset's
+`schema_versions` mapping. The selected version is stored as `_schema_version`
+when a raw record is ingested. Moving the pointer does not count as a source-file
+change, so it does not automatically rebuild history. New or changed files
+receive the current version; an explicit backfill is required when historical
+records must be reinterpreted.
 
-```text
-data/raw -> src/data_consumption -> data/lakehouse/raw + data/metadata
-```
-
-The later steps already have separate module folders and pipeline hooks, but their
-business logic is intentionally kept minimal until the cleaning, integration,
-aggregation, and benchmark tasks are implemented.
+Normal, integrated, aggregate, and benchmark tables are derived products. In
+particular, one integrated row may depend on several source datasets with
+different schema versions, so the pipeline does not label it with one ambiguous
+global version. Normal tables retain their source versions; integrated tables
+use source-specific version columns; aggregate tables collect distinct version
+sets; and benchmark results store a JSON version snapshot. Raw tables and
+ingestion metadata remain the authoritative lineage sources.

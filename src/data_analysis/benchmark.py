@@ -18,6 +18,7 @@ from src.common import (
     table_path,
     write_delta,
 )
+from src.schema_lineage import collect_schema_version_snapshot
 
 
 # =========================================================
@@ -51,6 +52,11 @@ def prepare_benchmark_data(
         "pickup_year",
         "pickup_month",
         "pickup_borough",
+        "taxi_schema_version",
+        "pickup_zone_schema_version",
+        "dropoff_zone_schema_version",
+        "weather_schema_version",
+        "air_quality_schema_versions",
     ]
 
     missing = [
@@ -349,6 +355,7 @@ def run_benchmark(
     benchmark_df = prepare_benchmark_data(
         integrated,
     )
+    schema_version_snapshot = collect_schema_version_snapshot(benchmark_df)
 
     # -----------------------------------------------------
     # Random file-count controls
@@ -584,6 +591,12 @@ def run_benchmark(
         row = {
             "strategy":
                 strategy_name,
+
+            "schema_versions":
+                json.dumps(
+                    schema_version_snapshot,
+                    sort_keys=True,
+                ),
 
             "partition_columns":
                 ",".join(

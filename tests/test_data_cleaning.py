@@ -31,6 +31,8 @@ def test_weather_timestamp_is_constructed(
     spark: SparkSession,
 ) -> None:
     columns = [
+        "_schema_version",
+        "_ingestion_timestamp",
         "year",
         "month",
         "day",
@@ -48,6 +50,8 @@ def test_weather_timestamp_is_constructed(
     ]
     values = [
         (
+            1,
+            datetime(2024, 4, 1),
             2024,
             1,
             2,
@@ -72,16 +76,21 @@ def test_weather_timestamp_is_constructed(
     assert result.event_hour == datetime(2024, 1, 2, 12)
     assert result.temperature_c == 6.1
     assert result.snow_depth_mm is None
+    assert result.source_schema_version == 1
 
 
 def test_air_quality_is_aggregated_by_correct_date(
     spark: SparkSession,
 ) -> None:
     columns = [
+        "_schema_version",
+        "_ingestion_timestamp",
+        "state_code",
         "state_name",
         "county_name",
         "county_code",
         "site_num",
+        "parameter_code",
         "poc",
         "date_local",
         "time_local",
@@ -91,10 +100,14 @@ def test_air_quality_is_aggregated_by_correct_date(
     unit = "Micrograms/cubic meter (LC)"
     values = [
         (
+            1,
+            datetime(2024, 4, 1),
+            36,
             "New York",
             "Queens",
             81,
             1,
+            88101,
             1,
             date(2024, 1, 2),
             datetime(2026, 9, 5, 12),
@@ -102,10 +115,14 @@ def test_air_quality_is_aggregated_by_correct_date(
             unit,
         ),
         (
+            2,
+            datetime(2024, 5, 1),
+            36,
             "New York",
             "Kings",
             47,
             2,
+            88101,
             1,
             date(2024, 1, 2),
             datetime(2026, 9, 5, 12),
@@ -122,12 +139,15 @@ def test_air_quality_is_aggregated_by_correct_date(
     assert rows[0].pm25_avg_ug_m3 == 6.0
     assert rows[0].air_quality_observation_count == 2
     assert rows[0].air_quality_site_count == 2
+    assert rows[0].source_schema_versions == [1, 2]
 
 
 def test_taxi_trip_cleaning_filters_flags_and_deduplicates(
     spark: SparkSession,
 ) -> None:
     base_trip = {
+        "_schema_version": 2,
+        "_ingestion_timestamp": datetime(2024, 5, 1),
         "_record_hash": "valid-trip",
         "vendor_id": 1,
         "pickup_timestamp": datetime(2024, 1, 2, 12, 0),
@@ -205,7 +225,40 @@ def test_taxi_trip_cleaning_filters_flags_and_deduplicates(
     }
     assert rows["valid-trip"].trip_duration_minutes == 10.0
     assert rows["valid-trip"].pickup_hour == datetime(2024, 1, 2, 12)
+    assert rows["valid-trip"].source_schema_version == 2
     assert rows["financial-adjustment"].is_zero_distance is True
     assert rows["financial-adjustment"].is_financial_adjustment is True
     assert rows["invalid-distance"].has_invalid_distance is True
     assert rows["invalid-distance"].trip_distance is None
+
+
+def test_weather_prefers_latest_schema_version_for_same_hour(
+    spark: SparkSession,
+) -> None:
+    columns = [
+        "_schema_version",
+        "_ingestion_timestamp",
+        "year",
+        "month",
+        "day",
+        "hour",
+        "temp",
+        "rhum",
+        "prcp",
+        "snwd",
+        "wdir",
+        "wspd",
+        "wpgt",
+        "pres",
+        "cldc",
+        "coco",
+    ]
+    rows = [
+        (1, datetime(2024, 4, 1), 2024, 1, 2, 12, 5.0, 50, 0, 0, 0, 0, 0, 1000, 0, 1),
+        (2, datetime(2024, 5, 1), 2024, 1, 2, 12, 6.0, 50, 0, 0, 0, 0, 0, 1000, 0, 1),
+    ]
+
+    result = clean_weather(spark.createDataFrame(rows, columns)).first()
+
+    assert result.temperature_c == 6.0
+    assert result.source_schema_version == 2
