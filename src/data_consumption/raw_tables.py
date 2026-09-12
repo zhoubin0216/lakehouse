@@ -5,6 +5,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from src.common import resolve_schema_definition, table_path, write_delta
+from src.data_quality import classify_records, write_rejected_records
 from src.data_consumption.metadata import (
     mark_ingestion_failure,
     mark_ingestion_success,
@@ -22,14 +23,31 @@ from src.data_consumption.registry import (
 )
 
 
-def build_raw_tables(spark: SparkSession, config: dict) -> None:
-    """Consume all configured datasets into raw Delta tables."""
+def build_raw_tables(spark: SparkSession, config: dict) -> dict:
+    """Consume all configured datasets and return an ingestion summary."""
+    dataset_results = []
     for dataset_name, dataset_config in config["datasets"].items():
-        consume_dataset(spark, dataset_name, dataset_config, config)
+        dataset_results.append(
+            consume_dataset(spark, dataset_name, dataset_config, config)
+        )
+
+    summary = {
+        "datasets": dataset_results,
+        "consumed_files": sum(result["consumed_files"] for result in dataset_results),
+        "accepted_records": sum(result["accepted_records"] for result in dataset_results),
+        "rejected_records": sum(result["rejected_records"] for result in dataset_results),
+    }
+    summary["has_new_data"] = summary["accepted_records"] > 0
+    return summary
 
 
-def consume_dataset(spark: SparkSession, dataset_name: str, dataset_config: dict, config: dict) -> None:
-    """Consume only new or changed source data for one dataset."""
+def consume_dataset(
+    spark: SparkSession,
+    dataset_name: str,
+    dataset_config: dict,
+    config: dict,
+) -> dict:
+    """Consume new or changed source data and return dataset-level metrics."""
     schema_version, schema_definition = resolve_schema_definition(dataset_name, dataset_config)
     run = start_ingestion_run(dataset_name, schema_version)
     try:
@@ -40,9 +58,9 @@ def consume_dataset(spark: SparkSession, dataset_name: str, dataset_config: dict
         if not files_to_consume:
             save_ingestion_metadata(mark_ingestion_success(run, processed_records=0), config)
             print(f"{dataset_name}: no new or changed source files")
-            return
+            return ingestion_result(dataset_name, schema_version)
 
-        raw_df = load_source_files(
+        raw_df, rejected_df = load_source_files(
             spark,
             files_to_consume,
             dataset_name,
@@ -54,6 +72,13 @@ def consume_dataset(spark: SparkSession, dataset_name: str, dataset_config: dict
         if should_deduplicate_records(config):
             raw_df = deduplicate_records(raw_df)
         processed_records = write_raw_delta(raw_df, dataset_config, config)
+        rejected_records = write_rejected_records(
+            rejected_df,
+            config,
+            stage="consumption",
+            dataset_name=dataset_name,
+            mode="overwrite" if is_sample_run(config) else "append",
+        )
 
         if is_sample_run(config):
             print(f"{dataset_name}: sample run, source registry not updated")
@@ -67,11 +92,42 @@ def consume_dataset(spark: SparkSession, dataset_name: str, dataset_config: dict
                 for path in files_to_consume
             ]
             save_source_file_registry(dataset_name, consumed_states, config)
-        save_ingestion_metadata(mark_ingestion_success(run, processed_records), config)
-        print(f"{dataset_name}: consumed {processed_records} rows from {len(files_to_consume)} file(s)")
+        save_ingestion_metadata(
+            mark_ingestion_success(run, processed_records, rejected_records),
+            config,
+        )
+        print(
+            f"{dataset_name}: consumed {processed_records} rows and rejected "
+            f"{rejected_records} rows from {len(files_to_consume)} file(s)"
+        )
+        return ingestion_result(
+            dataset_name,
+            schema_version,
+            consumed_files=len(files_to_consume),
+            accepted_records=processed_records,
+            rejected_records=rejected_records,
+        )
     except Exception as error:
         save_ingestion_metadata(mark_ingestion_failure(run, error), config)
         raise
+
+
+def ingestion_result(
+    dataset_name: str,
+    schema_version: int,
+    consumed_files: int = 0,
+    accepted_records: int = 0,
+    rejected_records: int = 0,
+) -> dict:
+    """Build the stable result contract consumed by pipeline orchestration."""
+    return {
+        "dataset_name": dataset_name,
+        "schema_version": schema_version,
+        "consumed_files": consumed_files,
+        "accepted_records": accepted_records,
+        "rejected_records": rejected_records,
+        "has_new_data": accepted_records > 0,
+    }
 
 
 def load_source_files(
@@ -82,32 +138,51 @@ def load_source_files(
     schema_definition: dict,
     config: dict,
     ingestion_run_id: str,
-) -> DataFrame:
+) -> tuple[DataFrame, DataFrame]:
     """Load CSV or Parquet files selected for consumption."""
     sample_limit = config.get("data_consumption", {}).get("sample_limit")
-    dfs = []
+    accepted_dfs = []
+    rejected_dfs = []
 
     for source_file in source_files:
         df = load_one_source_file(spark, source_file, schema_definition)
-        validate_expected_columns(df, schema_definition)
-        df = make_delta_safe_columns(df, schema_definition)
-        df = add_lineage_columns(
-            df,
+        validate_source_columns(df, schema_definition)
+        accepted, rejected = validate_and_cast_source_types(df, schema_definition)
+        source_state = get_file_state(source_file)
+        accepted = add_lineage_columns(
+            make_delta_safe_columns(accepted, schema_definition),
             dataset_name,
             schema_version,
             ingestion_run_id,
-            get_file_state(source_file),
+            source_state,
         )
-        dfs.append(df)
+        rejected = add_lineage_columns(
+            make_delta_safe_columns(rejected, schema_definition),
+            dataset_name,
+            schema_version,
+            ingestion_run_id,
+            source_state,
+        )
+        accepted_dfs.append(accepted)
+        rejected_dfs.append(rejected)
 
-    if not dfs:
+    if not accepted_dfs:
         raise ValueError("No source files to load")
 
-    result = dfs[0]
-    for df in dfs[1:]:
-        result = result.unionByName(df, allowMissingColumns=True)
+    accepted_result = union_dataframes(accepted_dfs)
+    rejected_result = union_dataframes(rejected_dfs)
 
-    return result.limit(int(sample_limit)) if sample_limit else result
+    if sample_limit:
+        limit = int(sample_limit)
+        return accepted_result.limit(limit), rejected_result.limit(limit)
+    return accepted_result, rejected_result
+
+
+def union_dataframes(dataframes: list[DataFrame]) -> DataFrame:
+    result = dataframes[0]
+    for dataframe in dataframes[1:]:
+        result = result.unionByName(dataframe, allowMissingColumns=True)
+    return result
 
 
 def load_one_source_file(spark: SparkSession, source_file, schema_definition: dict) -> DataFrame:
@@ -173,11 +248,81 @@ def should_deduplicate_records(config: dict) -> bool:
     return bool(config.get("data_consumption", {}).get("deduplicate_records", False))
 
 
-def validate_expected_columns(df: DataFrame, schema_definition: dict) -> None:
-    expected_columns = schema_definition.get("expected_columns", [])
-    missing_columns = sorted(set(expected_columns) - set(df.columns))
-    if missing_columns:
-        raise ValueError(f"Missing expected columns: {missing_columns}")
+def validate_source_columns(df: DataFrame, schema_definition: dict) -> None:
+    """Require source columns to match the selected schema contract exactly."""
+    expected_columns = set(schema_definition["expected_columns"])
+    actual_columns = set(df.columns)
+    missing_columns = sorted(expected_columns - actual_columns)
+    unexpected_columns = sorted(actual_columns - expected_columns)
+    if missing_columns or unexpected_columns:
+        raise ValueError(
+            "Source columns do not match the schema contract; "
+            f"missing={missing_columns}, unexpected={unexpected_columns}"
+        )
+
+
+def validate_and_cast_source_types(
+    df: DataFrame,
+    schema_definition: dict,
+) -> tuple[DataFrame, DataFrame]:
+    """Strictly validate Parquet types or split invalid CSV values into rejects."""
+    if schema_definition["format"] == "parquet":
+        validate_parquet_column_types(df, schema_definition)
+        return df, empty_type_rejections(df)
+
+    cast_columns = []
+    rejection_rules = []
+    for column in schema_definition["expected_columns"]:
+        expected_type = schema_definition["column_types"][column]
+        source = F.col(column)
+        cast_value = (
+            source.cast("string")
+            if expected_type == "string"
+            else try_cast(column, expected_type)
+        )
+        has_value = source.isNotNull() & (F.trim(source.cast("string")) != "")
+        rejection_rules.append(
+            (
+                f"{column}: expected {expected_type}",
+                has_value & cast_value.isNull(),
+            )
+        )
+        cast_columns.append(cast_value.alias(column))
+
+    accepted, rejected = classify_records(
+        df,
+        stage="consumption",
+        rejection_rules=rejection_rules,
+    )
+    return accepted.select(*cast_columns), rejected
+
+
+def validate_parquet_column_types(df: DataFrame, schema_definition: dict) -> None:
+    expected_types = schema_definition["column_types"]
+    actual_types = {field.name: field.dataType.simpleString() for field in df.schema.fields}
+    mismatches = {
+        column: {"expected": expected_types[column], "actual": actual_types[column]}
+        for column in schema_definition["expected_columns"]
+        if actual_types[column] != expected_types[column]
+    }
+    if mismatches:
+        raise ValueError(
+            f"Parquet column types do not match the schema contract: {mismatches}"
+        )
+
+
+def try_cast(column: str, expected_type: str):
+    escaped_column = column.replace("`", "``")
+    return F.expr(f"try_cast(`{escaped_column}` AS {expected_type})")
+
+
+def empty_type_rejections(df: DataFrame) -> DataFrame:
+    return (
+        df.limit(0)
+        .withColumn("_rejection_reasons", F.array().cast("array<string>"))
+        .withColumn("_rejection_stage", F.lit("consumption"))
+        .withColumn("_rejected_at", F.current_timestamp())
+    )
 
 
 def make_delta_safe_columns(df: DataFrame, schema_definition: dict) -> DataFrame:
@@ -186,7 +331,11 @@ def make_delta_safe_columns(df: DataFrame, schema_definition: dict) -> DataFrame
     used_names = set()
 
     for source in df.columns:
-        target = mapping.get(source, to_snake_case(source))
+        target = (
+            source
+            if source.startswith("_")
+            else mapping.get(source, to_snake_case(source))
+        )
         target = unique_name(target, used_names)
         used_names.add(target)
         if source != target:

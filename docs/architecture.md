@@ -16,7 +16,8 @@ flowchart LR
     end
 
     subgraph Runtime["Local Runtime"]
-        Pipeline["src/pipeline.py<br/>step orchestration"]
+        Pipeline["src/pipeline.py<br/>conditional step orchestration"]
+        BenchmarkEntry["data_analysis/benchmark.py<br/>independent benchmark entrypoint"]
         Common["src/common.py<br/>Spark, Delta IO, config helpers"]
         Viewer["src/view_table.py<br/>Delta table preview"]
     end
@@ -40,6 +41,7 @@ flowchart LR
         Integrated["data/lakehouse/integrated<br/>wide tables with per-source versions"]
         Aggregate["data/lakehouse/aggregate<br/>summaries with version sets"]
         Benchmark["data/lakehouse/benchmark<br/>strategies and version snapshots"]
+        Rejected["data/lakehouse/rejected<br/>consumption and cleaning rejects"]
     end
 
     TaxiFiles --> Consumption
@@ -54,12 +56,14 @@ flowchart LR
     Pipeline --> Cleaning
     Pipeline --> Integration
     Pipeline --> Aggregation
-    Pipeline --> Analysis
+    BenchmarkEntry --> Analysis
 
     Consumption --> Raw
+    Consumption --> Rejected
     Consumption --> Registry
     Consumption --> Runs
     Raw --> Cleaning
+    Cleaning --> Rejected
     Cleaning --> Normal
     Normal --> Integration
     Integration --> Integrated
@@ -87,19 +91,22 @@ flowchart TD
     SelectStep -->|normal| NormalStep["build_normal_tables()"]
     SelectStep -->|integrated| IntegratedStep["build_integrated_tables()"]
     SelectStep -->|aggregate| AggregateStep["build_aggregate_tables()"]
-    SelectStep -->|benchmark| BenchmarkStep["run_benchmark()"]
-    SelectStep -->|all| AllSteps["Run raw -> normal -> integrated -> aggregate -> benchmark"]
+    SelectStep -->|all| ConditionalRaw["Run raw consumption"]
+    ConditionalRaw --> NewData{"New accepted rows?"}
+    NewData -->|yes| AllSteps["Run normal -> integrated -> aggregate"]
+    NewData -->|no| Stop["Stop; downstream tables unchanged"]
+
+    BenchmarkStart["Run command<br/>python -m src.data_analysis.benchmark"] --> BenchmarkStep["run_benchmark()"]
 
     RawStep --> RawOutput["Raw Delta tables<br/>plus ingestion metadata"]
     NormalStep --> NormalOutput["Normal Delta tables"]
     IntegratedStep --> IntegratedOutput["Integrated taxi trips table"]
     AggregateStep --> AggregateOutput["Aggregated summary tables"]
     BenchmarkStep --> BenchmarkOutput["Benchmark tables and results"]
-    AllSteps --> RawOutput
-    RawOutput --> NormalOutput
+    ConditionalRaw --> RawOutput
+    AllSteps --> NormalOutput
     NormalOutput --> IntegratedOutput
     IntegratedOutput --> AggregateOutput
-    AggregateOutput --> BenchmarkOutput
 ```
 
 ## Storage Layout
@@ -113,6 +120,9 @@ data/
     integrated/                Joined analysis-ready Delta tables
     aggregate/                 Aggregated Delta tables
     benchmark/                 Tables for storage strategy comparison
+    rejected/
+      consumption/             Row-level source type conversion failures
+      cleaning/                Business-rule and required-field failures
   metadata/
     source_file_registry/      File state and last successful schema version
     ingestion_runs/            Per-run status, schema version, counts, and errors
@@ -134,3 +144,10 @@ global version. Normal tables retain their source versions; integrated tables
 use source-specific version columns; aggregate tables collect distinct version
 sets; and benchmark results store a JSON version snapshot. Raw tables and
 ingestion metadata remain the authoritative lineage sources.
+
+Source column names and Parquet physical types are validated against the active
+schema contract during consumption. CSV values are converted using declared
+`column_types`; conversion failures are retained in rejected Delta tables with
+their original values and reasons. Cleaning applies semantic validation and
+writes its own rejected records instead of silently dropping them. Missing or
+unexpected source columns are file-level contract failures and fail the run.

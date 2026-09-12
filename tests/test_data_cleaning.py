@@ -4,8 +4,8 @@ import pytest
 from pyspark.sql import SparkSession
 
 from src.data_cleaning.normal_tables import (
-    clean_air_quality,
-    clean_taxi_trips,
+    clean_air_quality_with_rejections,
+    clean_taxi_trips_with_rejections,
     clean_weather,
     validate_primary_key,
 )
@@ -132,7 +132,8 @@ def test_air_quality_is_aggregated_by_correct_date(
     ]
     raw = spark.createDataFrame(values, columns)
 
-    rows = clean_air_quality(raw).collect()
+    rows, rejected = clean_air_quality_with_rejections(raw)
+    rows = rows.collect()
 
     assert len(rows) == 1
     assert rows[0].event_hour == datetime(2024, 1, 2, 12)
@@ -140,6 +141,7 @@ def test_air_quality_is_aggregated_by_correct_date(
     assert rows[0].air_quality_observation_count == 2
     assert rows[0].air_quality_site_count == 2
     assert rows[0].source_schema_versions == [1, 2]
+    assert rejected.count() == 0
 
 
 def test_taxi_trip_cleaning_filters_flags_and_deduplicates(
@@ -213,9 +215,10 @@ def test_taxi_trip_cleaning_filters_flags_and_deduplicates(
         }
     }
 
+    cleaned, rejected = clean_taxi_trips_with_rejections(raw, dataset_config)
     rows = {
         row.trip_id: row
-        for row in clean_taxi_trips(raw, dataset_config).collect()
+        for row in cleaned.collect()
     }
 
     assert set(rows) == {
@@ -230,6 +233,14 @@ def test_taxi_trip_cleaning_filters_flags_and_deduplicates(
     assert rows["financial-adjustment"].is_financial_adjustment is True
     assert rows["invalid-distance"].has_invalid_distance is True
     assert rows["invalid-distance"].trip_distance is None
+    rejected_rows = {row.trip_id: row for row in rejected.collect()}
+    assert set(rejected_rows) == {"invalid-duration", "outside-project-period"}
+    assert rejected_rows["invalid-duration"]._rejection_reasons == [
+        "trip duration is outside the allowed range"
+    ]
+    assert rejected_rows["outside-project-period"]._rejection_reasons == [
+        "pickup timestamp is outside the configured period"
+    ]
 
 
 def test_weather_prefers_latest_schema_version_for_same_hour(

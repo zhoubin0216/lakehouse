@@ -15,6 +15,16 @@ CONFIG_PATH = Path("configs/config.yaml")
 DEFAULT_JAVA_HOME = Path("/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home")
 DEFAULT_SPARK_DRIVER_MEMORY = "6g"
 DEFAULT_SPARK_LOCAL_THREADS = "4"
+SUPPORTED_SOURCE_TYPES = {
+    "bigint",
+    "boolean",
+    "date",
+    "double",
+    "int",
+    "string",
+    "timestamp",
+    "timestamp_ntz",
+}
 T = TypeVar("T")
 
 
@@ -29,6 +39,10 @@ def validate_config(config: dict) -> None:
     """Validate configuration fields shared by all pipeline steps."""
     if not isinstance(config, dict):
         raise ValueError("Configuration must be a YAML mapping")
+
+    data_quality = config.get("data_quality")
+    if not isinstance(data_quality, dict) or not data_quality.get("rejected_table_root"):
+        raise ValueError("Configuration must define data_quality.rejected_table_root")
 
     datasets = config.get("datasets")
     if not isinstance(datasets, dict) or not datasets:
@@ -68,8 +82,25 @@ def validate_schema_definition(dataset_name: str, version_key: str, schema_defin
         raise ValueError(f"{label} must define expected_columns as a list")
     if not isinstance(schema_definition.get("columns"), dict):
         raise ValueError(f"{label} must define columns as a mapping")
+    column_types = schema_definition.get("column_types")
+    if not isinstance(column_types, dict):
+        raise ValueError(f"{label} must define column_types as a mapping")
+    expected_columns = set(schema_definition["expected_columns"])
+    type_columns = set(column_types)
+    if expected_columns != type_columns:
+        missing = sorted(expected_columns - type_columns)
+        unexpected = sorted(type_columns - expected_columns)
+        raise ValueError(
+            f"{label} column_types keys must match expected_columns; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    unsupported_types = sorted(set(column_types.values()) - SUPPORTED_SOURCE_TYPES)
+    if unsupported_types:
+        raise ValueError(f"{label} contains unsupported column types: {unsupported_types}")
     if "read_options" in schema_definition and not isinstance(schema_definition["read_options"], dict):
         raise ValueError(f"{label} read_options must be a mapping")
+    if schema_definition["format"] == "csv" and schema_definition.get("read_options", {}).get("inferSchema"):
+        raise ValueError(f"{label} must disable CSV inferSchema for strict type validation")
 
 
 def resolve_schema_definition(

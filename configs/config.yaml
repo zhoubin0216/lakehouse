@@ -11,6 +11,9 @@ data_consumption:
   deduplicate_records: false
   checksum_max_bytes: 10485760
 
+data_quality:
+  rejected_table_root: rejected
+
 data_integration:
   integrated_taxi_trips_table: integrated/integrated_taxi_trips
   partitions: [pickup_year, pickup_month]
@@ -37,6 +40,26 @@ datasets:
     schema_versions:
       "1":
         format: parquet
+        column_types:
+          VendorID: int
+          tpep_pickup_datetime: timestamp_ntz
+          tpep_dropoff_datetime: timestamp_ntz
+          passenger_count: bigint
+          trip_distance: double
+          RatecodeID: bigint
+          store_and_fwd_flag: string
+          PULocationID: int
+          DOLocationID: int
+          payment_type: bigint
+          fare_amount: double
+          extra: double
+          mta_tax: double
+          tip_amount: double
+          tolls_amount: double
+          improvement_surcharge: double
+          total_amount: double
+          congestion_surcharge: double
+          Airport_fee: double
         expected_columns:
           - VendorID
           - tpep_pickup_datetime
@@ -86,7 +109,12 @@ datasets:
         format: csv
         read_options:
           header: true
-          inferSchema: true
+          inferSchema: false
+        column_types:
+          LocationID: int
+          Borough: string
+          Zone: string
+          service_zone: string
         expected_columns:
           - LocationID
           - Borough
@@ -112,7 +140,32 @@ datasets:
         format: csv
         read_options:
           header: true
-          inferSchema: true
+          inferSchema: false
+        column_types:
+          year: int
+          month: int
+          day: int
+          hour: int
+          temp: double
+          temp_source: string
+          rhum: double
+          rhum_source: string
+          prcp: double
+          prcp_source: string
+          snwd: double
+          snwd_source: string
+          wdir: double
+          wdir_source: string
+          wspd: double
+          wspd_source: string
+          wpgt: double
+          wpgt_source: string
+          pres: double
+          pres_source: string
+          cldc: double
+          cldc_source: string
+          coco: int
+          coco_source: string
         expected_columns:
           - year
           - month
@@ -153,7 +206,32 @@ datasets:
         format: csv
         read_options:
           header: true
-          inferSchema: true
+          inferSchema: false
+        column_types:
+          State Code: string
+          County Code: string
+          Site Num: string
+          Parameter Code: string
+          POC: int
+          Latitude: double
+          Longitude: double
+          Datum: string
+          Parameter Name: string
+          Date Local: date
+          Time Local: string
+          Date GMT: date
+          Time GMT: string
+          Sample Measurement: double
+          Units of Measure: string
+          MDL: double
+          Uncertainty: double
+          Qualifier: string
+          Method Type: string
+          Method Code: string
+          Method Name: string
+          State Name: string
+          County Name: string
+          Date of Last Change: date
         expected_columns:
           - State Code
           - County Code

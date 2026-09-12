@@ -25,6 +25,9 @@ Use this file as the shared source for the final 3-5 page design report.
 - Deduplicate raw records using `_record_hash` or dataset business keys to reduce duplicate ingestion after retries.
 - Preserve all source contracts under `schema_versions` and select the ingestion contract through `current_schema_version`.
 - Treat the selected `_schema_version` as immutable ingestion-time lineage. Moving the current-version pointer alone does not re-consume unchanged files or rewrite old raw rows; historical reinterpretation requires an explicit backfill.
+- Define an explicit `column_types` entry for every expected column in every schema version.
+- Require exact Parquet physical types; read CSV fields as strings and use safe conversion rather than schema inference.
+- Write row-level CSV conversion failures to `rejected/consumption/<dataset>` with original values and `_rejection_reasons`; treat missing or unexpected columns as a failed ingestion run.
 
 ## Common Data Model
 
@@ -36,6 +39,7 @@ Use this file as the shared source for the final 3-5 page design report.
 
 - For repeated lookup or hourly business keys, prefer the highest source schema version and then the latest ingestion timestamp.
 - Preserve a scalar `source_schema_version` for one-record Normal outputs and a sorted `source_schema_versions` set for air-quality hourly aggregates.
+- Write records that violate required-field, timestamp, project-period, duration, measurement, or unit rules to `rejected/cleaning/<dataset>` instead of silently dropping them.
 - Validate that lookup and hourly-table primary keys are present, non-null, and unique.
 - Treat all project event times as local wall-clock values stored as `timestamp_ntz`.
 - Construct weather timestamps from the source `year`, `month`, `day`, and `hour` fields.
