@@ -8,11 +8,11 @@ from src.data_analysis.benchmark import run_benchmark
 from src.data_cleaning.normal_tables import build_normal_tables
 from src.data_consumption.raw_tables import build_raw_tables
 from src.data_integration.integrated_tables import build_integrated_tables
-
+from src.data_analysis.analytical_queries import run_analytical_queries
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("step", choices=["raw", "normal", "integrated", "aggregate", "benchmark", "all"])
+    parser.add_argument("step", choices=["raw", "normal", "integrated", "aggregate", "benchmark", "all", "queries"])
     args = parser.parse_args()
 
     config = load_config()
@@ -24,6 +24,7 @@ def main() -> None:
         "integrated": build_integrated_tables,
         "aggregate": build_aggregate_tables,
         "benchmark": run_benchmark,
+        "queries": run_analytical_queries,
     }
 
     for step, build in steps.items():

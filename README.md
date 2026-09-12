@@ -213,3 +213,48 @@ data/lakehouse/benchmark/
 
 Benchmark statistics are saved to the configured CSV result file
 (`data/lakehouse/benchmark/benchmark_results.csv`).
+
+# Week 2 Urban Data Lakehouse
+
+Course project for ID2221 Week 2: Querying and Optimizing the Urban Data Platform.
+
+## Analytical Queries
+
+This step executes six reusable Spark SQL analytical queries on the
+`integrated_taxi_trips` Delta table:
+
+* monthly taxi demand for each pickup zone,
+* average trip distance under different weather conditions,
+* relationship between hourly PM2.5 and taxi demand,
+* taxi zones with the largest demand variation across weather conditions,
+* peak travel hours for each day of the week,
+* monthly taxi demand trends and month-over-month changes.
+
+Run the analytical queries with:
+
+```bash
+python -m src.pipeline queries
+```
+
+The query results are materialized as baseline Delta tables under:
+
+```text
+data/lakehouse/analysis/baseline_queries/
+  monthly_zone_demand/
+  avg_distance_by_weather/
+  air_quality_demand_relationship/
+  zone_weather_variation/
+  peak_hour_by_weekday/
+  monthly_demand_trend/
+```
+
+Query execution times are measured using one warm-up run followed by five
+measured runs. The mean, median, minimum, maximum, and individual run times are
+saved to:
+
+```text
+data/lakehouse/analysis/baseline_queries/baseline_query_times.csv
+```
+
+The median execution time is used as the baseline query latency for subsequent
+performance comparisons.

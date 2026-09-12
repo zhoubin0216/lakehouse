@@ -207,3 +207,7 @@ benchmark:
   write_runs: 3
   warmup_runs: 1
   measured_runs: 5
+
+data_analysis:
+  baseline_results_root: analysis/baseline_queries
+  baseline_timing_file: analysis/baseline_queries/baseline_query_times.csv
