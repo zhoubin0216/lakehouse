@@ -17,6 +17,7 @@ configs/config.yaml     Dataset and storage configuration
 src/pipeline.py         Thin command-line entrypoint
 src/view_table.py       Delta table preview helper for PyCharm/terminal
 src/common.py           Shared config, Spark, Delta IO, and timing helpers
+src/data_quality.py     Accepted/rejected record classification and storage
 src/data_consumption/   source files -> raw Delta tables
 src/data_cleaning/      raw -> normal Delta tables
 src/data_integration/   normal -> integrated_taxi_trips
@@ -52,13 +53,29 @@ current_schema_version: 2
 schema_versions:
   "1":
     format: csv
+    read_options: {header: true, inferSchema: false}
     expected_columns: [old_name]
+    column_types: {old_name: int}
     columns: {old_name: canonical_name}
   "2":
     format: csv
+    read_options: {header: true, inferSchema: false}
     expected_columns: [new_name]
+    column_types: {new_name: int}
     columns: {new_name: canonical_name}
 ```
+
+Each schema version must define one Spark SQL type in `column_types` for every
+expected source column. Parquet physical types must match exactly. CSV files are
+read without `inferSchema`; non-empty values that cannot be safely converted are
+written to `rejected/consumption/<dataset>` with `_rejection_reasons`, while
+missing or unexpected columns fail the ingestion run as a file-level contract
+violation.
+
+Raw tables created before `column_types` was introduced use CSV-inferred physical
+types. Recreate those raw tables and their source-file registries together before
+the next real ingestion run; after that one-time migration, incremental writes
+use the explicit contract types.
 
 ## Setup
 
@@ -75,13 +92,23 @@ python -m src.pipeline raw
 python -m src.pipeline normal
 python -m src.pipeline integrated
 python -m src.pipeline aggregate
-python -m src.pipeline benchmark
 ```
 
-Or run the whole main pipeline:
+Run the incremental main pipeline (the intended scheduled-task entrypoint):
 
 ```bash
 python -m src.pipeline all
+```
+
+This command always checks the raw sources first. It runs `normal`, `integrated`,
+and `aggregate` in order only when consumption writes at least one new accepted
+raw record. If no valid new data is found, the three downstream steps are skipped.
+Rejected-only input is recorded but does not trigger a downstream rebuild.
+
+Benchmarking is intentionally outside the recurring pipeline. Run it explicitly:
+
+```bash
+python -m src.data_analysis.benchmark
 ```
 
 ## View Delta Tables
@@ -120,6 +147,7 @@ data/lakehouse/
   integrated/   Joined analysis-ready tables
   aggregate/    Aggregated summary tables
   benchmark/    Tables used for storage strategy comparison
+  rejected/     Consumption and cleaning rejected-record tables
 ```
 
 ## Data Cleaning and Integration
@@ -133,6 +161,8 @@ The normal-table pipeline:
   and then the latest ingestion timestamp,
 - preserves `source_schema_version` for one-record outputs and
   `source_schema_versions` for hourly air-quality aggregates,
+- writes records that fail required-key, timestamp, project-period, duration,
+  measurement, or unit rules to `rejected/cleaning/<dataset>`,
 - validates non-null and unique primary keys for lookup and hourly tables,
 - standardizes timestamps as local `timestamp_ntz` values,
 - normalizes measurement types and replaces invalid measurements with nulls,
@@ -170,6 +200,8 @@ Preview the outputs with:
 python -m src.view_table normal/weather_hourly --limit 10
 python -m src.view_table normal/air_quality_hourly --limit 10
 python -m src.view_table integrated/integrated_taxi_trips --limit 10 --no-count
+python -m src.view_table rejected/consumption/weather_hourly --limit 10
+python -m src.view_table rejected/cleaning/yellow_taxi_trips --limit 10
 ```
 
 The current Q1 2024 run retains 9,551,387 cleaned taxi trips. The integrated
@@ -230,10 +262,10 @@ The benchmark executes the following required queries:
 - average trip duration per pickup date,
 - average fare amount per pickup borough.
 
-Run the benchmark with:
+Run the independent benchmark with:
 
 ```bash
-python -m src.pipeline benchmark
+python -m src.data_analysis.benchmark
 ```
 
 The generated benchmark Delta tables are written under:

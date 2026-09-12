@@ -12,8 +12,10 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from src.common import (
+    create_spark,
     directory_size,
     file_count,
+    load_config,
     read_delta,
     table_path,
     write_delta,
@@ -751,3 +753,17 @@ def run_benchmark(
         f"{result_path}"
     )
     print("=" * 65)
+
+
+def main() -> None:
+    """Run the benchmark independently from the incremental data pipeline."""
+    config = load_config()
+    spark = create_spark()
+    try:
+        run_benchmark(spark, config)
+    finally:
+        spark.stop()
+
+
+if __name__ == "__main__":
+    main()
