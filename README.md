@@ -292,10 +292,6 @@ source-specific schema-version columns used by their input records.
 
 Course project for ID2221 Week 2: Querying and Optimizing the Urban Data Platform.
 
-# Week 2 Urban Data Lakehouse
-
-Course project for ID2221 Week 2: Querying and Optimizing the Urban Data Platform.
-
 ## Analytical Queries
 
 This step executes six reusable Spark SQL analytical queries using the
