@@ -8,7 +8,6 @@ from src.data_cleaning.normal_tables import build_normal_tables
 from src.data_consumption.raw_tables import build_raw_tables
 from src.data_integration.integrated_tables import build_integrated_tables
 
-
 def run_incremental_pipeline(spark, config: dict) -> dict:
     """Consume sources and rebuild derived tables only when new valid rows arrive."""
     ingestion = build_raw_tables(spark, config)
@@ -36,6 +35,7 @@ def run_pipeline_step(spark, config: dict, step: str):
         "normal": build_normal_tables,
         "integrated": build_integrated_tables,
         "aggregate": build_aggregate_tables,
+
     }
     return steps[step](spark, config)
 

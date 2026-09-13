@@ -285,3 +285,40 @@ Benchmark statistics are saved to the configured CSV result file
 (`data/lakehouse/benchmark/benchmark_results.csv`). Each result row includes a
 `schema_versions` JSON snapshot. Benchmark Delta tables also retain the
 source-specific schema-version columns used by their input records.
+
+(`data/lakehouse/benchmark/benchmark_results.csv`).
+
+# Week 2 Urban Data Lakehouse
+
+Course project for ID2221 Week 2: Querying and Optimizing the Urban Data Platform.
+
+# Week 2 Urban Data Lakehouse
+
+Course project for ID2221 Week 2: Querying and Optimizing the Urban Data Platform.
+
+## Analytical Queries
+
+This step executes six reusable Spark SQL analytical queries using the
+integrated taxi-trip dataset and the underlying Delta tables.
+
+Run the analytical queries with:
+
+```bash
+python -m src.data_analysis.query_benchmark
+```
+
+The query results are saved as Delta tables under:
+
+```text
+data/lakehouse/analysis/baseline_queries/
+```
+
+Each query is run once as a warm-up and five times for measurement.
+Individual execution times and summary statistics are saved to:
+
+```text
+data/lakehouse/analysis/baseline_queries/baseline_query_times.csv
+```
+
+The median execution time is used as the baseline query latency for
+subsequent performance comparisons.
