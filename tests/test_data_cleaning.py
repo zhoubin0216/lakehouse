@@ -2,6 +2,7 @@ from datetime import date, datetime
 
 import pytest
 from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
 
 from src.data_cleaning.normal_tables import (
     clean_air_quality_with_rejections,
@@ -144,6 +145,75 @@ def test_air_quality_is_aggregated_by_correct_date(
     assert rejected.count() == 0
 
 
+def test_air_quality_preserves_local_hour_across_dst_gap(
+    spark: SparkSession,
+) -> None:
+    columns = [
+        "_schema_version",
+        "_ingestion_timestamp",
+        "state_code",
+        "state_name",
+        "county_name",
+        "county_code",
+        "site_num",
+        "parameter_code",
+        "poc",
+        "date_local",
+        "time_local",
+        "sample_measurement",
+        "units_of_measure",
+    ]
+    unit = "Micrograms/cubic meter (LC)"
+    values = [
+        (
+            1,
+            datetime(2024, 4, 1),
+            "36",
+            "New York",
+            "Queens",
+            "081",
+            "1",
+            "88101",
+            1,
+            date(2024, 3, 31),
+            "02:00",
+            4.0,
+            unit,
+        ),
+        (
+            1,
+            datetime(2024, 4, 1),
+            "36",
+            "New York",
+            "Queens",
+            "081",
+            "2",
+            "88101",
+            1,
+            date(2024, 3, 31),
+            "03:00",
+            8.0,
+            unit,
+        ),
+    ]
+    original_timezone = spark.conf.get("spark.sql.session.timeZone")
+    spark.conf.set("spark.sql.session.timeZone", "Europe/Stockholm")
+    try:
+        cleaned, rejected = clean_air_quality_with_rejections(
+            spark.createDataFrame(values, columns)
+        )
+        rows = cleaned.orderBy("event_hour").collect()
+    finally:
+        spark.conf.set("spark.sql.session.timeZone", original_timezone)
+
+    assert [row.event_hour for row in rows] == [
+        datetime(2024, 3, 31, 2),
+        datetime(2024, 3, 31, 3),
+    ]
+    assert [row.pm25_avg_ug_m3 for row in rows] == [4.0, 8.0]
+    assert rejected.count() == 0
+
+
 def test_taxi_trip_cleaning_filters_flags_and_deduplicates(
     spark: SparkSession,
 ) -> None:
@@ -241,6 +311,70 @@ def test_taxi_trip_cleaning_filters_flags_and_deduplicates(
     assert rejected_rows["outside-project-period"]._rejection_reasons == [
         "pickup timestamp is outside the configured period"
     ]
+
+
+def test_taxi_pickup_hour_preserves_local_hour_across_dst_gap(
+    spark: SparkSession,
+) -> None:
+    raw = spark.createDataFrame(
+        [
+            {
+                "_schema_version": 1,
+                "_ingestion_timestamp": datetime(2024, 4, 1),
+                "_record_hash": "dst-gap-trip",
+                "vendor_id": 1,
+                "pickup_timestamp": "2024-03-31 02:30:00",
+                "dropoff_timestamp": "2024-03-31 02:40:00",
+                "passenger_count": 1,
+                "trip_distance": 2.0,
+                "ratecode_id": 1,
+                "store_and_fwd_flag": "N",
+                "pickup_location_id": 1,
+                "dropoff_location_id": 2,
+                "payment_type": 1,
+                "fare_amount": 10.0,
+                "extra": 0.0,
+                "mta_tax": 0.5,
+                "tip_amount": 1.0,
+                "tolls_amount": 0.0,
+                "improvement_surcharge": 1.0,
+                "total_amount": 12.5,
+                "congestion_surcharge": 0.0,
+                "airport_fee": 0.0,
+            }
+        ]
+    )
+    raw = (
+        raw.withColumn(
+            "pickup_timestamp",
+            F.to_timestamp_ntz("pickup_timestamp"),
+        )
+        .withColumn(
+            "dropoff_timestamp",
+            F.to_timestamp_ntz("dropoff_timestamp"),
+        )
+    )
+    dataset_config = {
+        "quality_rules": {
+            "pickup_start": "2024-01-01 00:00:00",
+            "pickup_end_exclusive": "2024-04-01 00:00:00",
+            "max_trip_duration_seconds": 86400,
+            "max_trip_distance": 500.0,
+        }
+    }
+    original_timezone = spark.conf.get("spark.sql.session.timeZone")
+    spark.conf.set("spark.sql.session.timeZone", "Europe/Stockholm")
+    try:
+        cleaned, rejected = clean_taxi_trips_with_rejections(
+            raw,
+            dataset_config,
+        )
+        result = cleaned.first()
+    finally:
+        spark.conf.set("spark.sql.session.timeZone", original_timezone)
+
+    assert result.pickup_hour == datetime(2024, 3, 31, 2)
+    assert rejected.count() == 0
 
 
 def test_weather_prefers_latest_schema_version_for_same_hour(

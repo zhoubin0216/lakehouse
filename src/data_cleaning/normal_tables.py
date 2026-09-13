@@ -274,7 +274,9 @@ def clean_air_quality_with_rejections(
         )
         .withColumn(
             "event_timestamp",
-            F.to_timestamp(
+            # Parse directly as a wall-clock value so host DST rules cannot
+            # normalize a local 02:00 observation into 03:00.
+            F.to_timestamp_ntz(
                 F.concat_ws(
                     " ",
                     F.date_format("date_local", "yyyy-MM-dd"),
@@ -284,7 +286,7 @@ def clean_air_quality_with_rejections(
                         1,
                     ),
                 )
-            ).cast("timestamp_ntz"),
+            ),
         )
     )
 
@@ -469,10 +471,16 @@ def clean_taxi_trips_with_rejections(
         )
         .withColumn(
             "pickup_hour",
-            F.date_trunc(
-                "hour",
-                F.col("pickup_timestamp"),
-            ).cast("timestamp_ntz"),
+            # Build an NTZ hour directly; date_trunc returns a zoned timestamp
+            # and can shift nonexistent hours in the host machine's timezone.
+            F.make_timestamp_ntz(
+                F.year("pickup_timestamp"),
+                F.month("pickup_timestamp"),
+                F.dayofmonth("pickup_timestamp"),
+                F.hour("pickup_timestamp"),
+                F.lit(0),
+                F.lit(0),
+            ),
         )
         .withColumn(
             "pickup_date",
