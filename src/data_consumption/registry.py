@@ -5,14 +5,19 @@ import json
 from pathlib import Path
 
 
-def discover_source_files(dataset_name: str, dataset_config: dict, config: dict) -> list[Path]:
+def discover_source_files(
+    dataset_name: str,
+    dataset_config: dict,
+    schema_definition: dict,
+    config: dict,
+) -> list[Path]:
     """Return source files for one dataset."""
     source = Path(config["paths"]["raw"]) / dataset_config["source"]
 
     if any(char in str(source) for char in "*?[]"):
         files = sorted(source.parent.glob(source.name))
     elif source.is_dir():
-        extension = dataset_config["format"].lower()
+        extension = schema_definition["format"].lower()
         files = sorted(path for path in source.iterdir() if path.is_file() and path.suffix.lower() == f".{extension}")
     elif source.is_file():
         files = [source]
@@ -51,6 +56,12 @@ def add_checksum(state: dict, checksum_max_bytes: int) -> dict:
     return state
 
 
+def add_schema_version(state: dict, schema_version: int) -> dict:
+    """Record the schema contract used for the successful file ingestion."""
+    state["schema_version"] = schema_version
+    return state
+
+
 def load_source_file_registry(dataset_name: str, config: dict) -> dict:
     """Load previously consumed source file states from metadata storage."""
     path = registry_path(dataset_name, config)
@@ -62,7 +73,7 @@ def load_source_file_registry(dataset_name: str, config: dict) -> dict:
 
 
 def find_files_to_consume(source_files: list[Path], registry: dict) -> list[Path]:
-    """Select new or changed source files that should be consumed."""
+    """Select new or changed files; a schema-version bump alone is not a change."""
     consumed = {item["path"]: item for item in registry.get("files", [])}
     files_to_consume = []
 

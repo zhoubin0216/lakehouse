@@ -15,12 +15,106 @@ CONFIG_PATH = Path("configs/config.yaml")
 DEFAULT_JAVA_HOME = Path("/usr/local/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home")
 DEFAULT_SPARK_DRIVER_MEMORY = "6g"
 DEFAULT_SPARK_LOCAL_THREADS = "4"
+SUPPORTED_SOURCE_TYPES = {
+    "bigint",
+    "boolean",
+    "date",
+    "double",
+    "int",
+    "string",
+    "timestamp",
+    "timestamp_ntz",
+}
 T = TypeVar("T")
 
 
 def load_config(path: Path = CONFIG_PATH) -> dict:
     with path.open("r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+        config = yaml.safe_load(handle)
+    validate_config(config)
+    return config
+
+
+def validate_config(config: dict) -> None:
+    """Validate configuration fields shared by all pipeline steps."""
+    if not isinstance(config, dict):
+        raise ValueError("Configuration must be a YAML mapping")
+
+    data_quality = config.get("data_quality")
+    if not isinstance(data_quality, dict) or not data_quality.get("rejected_table_root"):
+        raise ValueError("Configuration must define data_quality.rejected_table_root")
+
+    datasets = config.get("datasets")
+    if not isinstance(datasets, dict) or not datasets:
+        raise ValueError("Configuration must define at least one dataset")
+
+    for dataset_name, dataset_config in datasets.items():
+        if not isinstance(dataset_config, dict):
+            raise ValueError(f"Dataset '{dataset_name}' configuration must be a YAML mapping")
+        current_version = dataset_config.get("current_schema_version")
+        if isinstance(current_version, bool) or not isinstance(current_version, int) or current_version < 1:
+            raise ValueError(
+                f"Dataset '{dataset_name}' must define current_schema_version as a positive integer"
+            )
+
+        schema_versions = dataset_config.get("schema_versions")
+        if not isinstance(schema_versions, dict) or not schema_versions:
+            raise ValueError(f"Dataset '{dataset_name}' must define schema_versions")
+
+        for version_key, schema_definition in schema_versions.items():
+            if not isinstance(version_key, str) or not version_key.isdigit() or int(version_key) < 1:
+                raise ValueError(
+                    f"Dataset '{dataset_name}' schema_versions keys must be quoted positive integers"
+                )
+            validate_schema_definition(dataset_name, version_key, schema_definition)
+
+        resolve_schema_definition(dataset_name, dataset_config)
+
+
+def validate_schema_definition(dataset_name: str, version_key: str, schema_definition: dict) -> None:
+    """Validate one immutable source schema contract."""
+    label = f"Dataset '{dataset_name}' schema version {version_key}"
+    if not isinstance(schema_definition, dict):
+        raise ValueError(f"{label} must be a YAML mapping")
+    if schema_definition.get("format") not in {"csv", "parquet"}:
+        raise ValueError(f"{label} must define format as 'csv' or 'parquet'")
+    if not isinstance(schema_definition.get("expected_columns"), list):
+        raise ValueError(f"{label} must define expected_columns as a list")
+    if not isinstance(schema_definition.get("columns"), dict):
+        raise ValueError(f"{label} must define columns as a mapping")
+    column_types = schema_definition.get("column_types")
+    if not isinstance(column_types, dict):
+        raise ValueError(f"{label} must define column_types as a mapping")
+    expected_columns = set(schema_definition["expected_columns"])
+    type_columns = set(column_types)
+    if expected_columns != type_columns:
+        missing = sorted(expected_columns - type_columns)
+        unexpected = sorted(type_columns - expected_columns)
+        raise ValueError(
+            f"{label} column_types keys must match expected_columns; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    unsupported_types = sorted(set(column_types.values()) - SUPPORTED_SOURCE_TYPES)
+    if unsupported_types:
+        raise ValueError(f"{label} contains unsupported column types: {unsupported_types}")
+    if "read_options" in schema_definition and not isinstance(schema_definition["read_options"], dict):
+        raise ValueError(f"{label} read_options must be a mapping")
+    if schema_definition["format"] == "csv" and schema_definition.get("read_options", {}).get("inferSchema"):
+        raise ValueError(f"{label} must disable CSV inferSchema for strict type validation")
+
+
+def resolve_schema_definition(
+    dataset_name: str,
+    dataset_config: dict,
+    schema_version: int | None = None,
+) -> tuple[int, dict]:
+    """Return a requested schema definition, defaulting to the current pointer."""
+    version = dataset_config.get("current_schema_version") if schema_version is None else schema_version
+    definitions = dataset_config.get("schema_versions", {})
+    definition = definitions.get(str(version))
+    if definition is None:
+        raise ValueError(f"Dataset '{dataset_name}' has no schema definition for version {version}")
+    return version, definition
 
 
 def create_spark() -> SparkSession:
@@ -77,23 +171,41 @@ def table_path(config: dict, relative_path: str) -> str:
     return str(Path(config["paths"]["lakehouse"]) / relative_path)
 
 
-def read_source(spark: SparkSession, config: dict, dataset: dict) -> DataFrame:
+def read_source(
+    spark: SparkSession,
+    config: dict,
+    dataset: dict,
+    dataset_name: str = "dataset",
+    schema_version: int | None = None,
+) -> DataFrame:
+    _, schema_definition = resolve_schema_definition(dataset_name, dataset, schema_version)
     source = raw_path(config, dataset)
-    if dataset["format"] == "csv":
-        return spark.read.option("header", True).option("inferSchema", True).csv(source)
-    if dataset["format"] == "parquet":
+    if schema_definition["format"] == "csv":
+        reader = spark.read
+        for key, value in schema_definition.get("read_options", {}).items():
+            reader = reader.option(key, value)
+        return reader.csv(source)
+    if schema_definition["format"] == "parquet":
         return spark.read.parquet(source)
-    raise ValueError(f"Unsupported format: {dataset['format']}")
+    raise ValueError(f"Unsupported format: {schema_definition['format']}")
 
 
 def read_delta(spark: SparkSession, path: str) -> DataFrame:
     return spark.read.format("delta").load(path)
 
 
-def write_delta(df: DataFrame, path: str, partitions: list[str] | None = None, mode: str = "overwrite") -> None:
+def write_delta(
+    df: DataFrame,
+    path: str,
+    partitions: list[str] | None = None,
+    mode: str = "overwrite",
+    merge_schema: bool = False,
+) -> None:
     writer = df.write.format("delta").mode(mode)
     if mode == "overwrite":
         writer = writer.option("overwriteSchema", "true")
+    elif merge_schema:
+        writer = writer.option("mergeSchema", "true")
     if partitions:
         writer = writer.partitionBy(*partitions)
     writer.save(path)

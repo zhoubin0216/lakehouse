@@ -13,27 +13,29 @@ def test_integration_preserves_unmatched_taxi_trips(
 
     taxi_trips = spark.createDataFrame(
         [
-            ("trip-a", 1, 2, hour_12),
-            ("trip-b", 2, 1, hour_13),
+            ("trip-a", 1, 2, hour_12, 2),
+            ("trip-b", 2, 1, hour_13, 2),
         ],
         [
             "trip_id",
             "pickup_location_id",
             "dropoff_location_id",
             "pickup_hour",
+            "source_schema_version",
         ],
     )
 
     zones = spark.createDataFrame(
         [
-            (1, "Manhattan", "Zone A", "Yellow Zone"),
-            (2, "Queens", "Zone B", "Boro Zone"),
+            (1, "Manhattan", "Zone A", "Yellow Zone", 1),
+            (2, "Queens", "Zone B", "Boro Zone", 1),
         ],
         [
             "location_id",
             "borough",
             "zone",
             "service_zone",
+            "source_schema_version",
         ],
     )
 
@@ -51,6 +53,7 @@ def test_integration_preserves_unmatched_taxi_trips(
                 1015.0,
                 20.0,
                 1,
+                2,
             )
         ],
         [
@@ -65,6 +68,7 @@ def test_integration_preserves_unmatched_taxi_trips(
             "pressure_hpa",
             "cloud_cover_pct",
             "weather_condition_code",
+            "source_schema_version",
         ],
     )
 
@@ -77,6 +81,7 @@ def test_integration_preserves_unmatched_taxi_trips(
                 8.0,
                 5,
                 5,
+                [1, 2],
             )
         ],
         [
@@ -86,6 +91,7 @@ def test_integration_preserves_unmatched_taxi_trips(
             "pm25_max_ug_m3",
             "air_quality_observation_count",
             "air_quality_site_count",
+            "source_schema_versions",
         ],
     )
 
@@ -108,8 +114,15 @@ def test_integration_preserves_unmatched_taxi_trips(
     assert matched.dropoff_borough == "Queens"
     assert matched.weather_available is True
     assert matched.air_quality_available is True
+    assert matched.taxi_schema_version == 2
+    assert matched.pickup_zone_schema_version == 1
+    assert matched.dropoff_zone_schema_version == 1
+    assert matched.weather_schema_version == 2
+    assert matched.air_quality_schema_versions == [1, 2]
 
     unmatched = rows[1]
     assert unmatched.trip_id == "trip-b"
     assert unmatched.weather_available is False
     assert unmatched.air_quality_available is False
+    assert unmatched.weather_schema_version is None
+    assert unmatched.air_quality_schema_versions is None

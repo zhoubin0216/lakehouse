@@ -2,6 +2,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from src.common import read_delta, table_path, write_delta
+from src.schema_lineage import schema_version_aggregations
 
 
 def trips_per_borough(df: DataFrame) -> DataFrame:
@@ -10,6 +11,7 @@ def trips_per_borough(df: DataFrame) -> DataFrame:
         df.groupBy("pickup_borough")
         .agg(
             F.count("*").alias("trip_count"),
+            *schema_version_aggregations(df),
         )
         .orderBy(F.desc("trip_count"))
     )
@@ -22,6 +24,7 @@ def avg_trip_duration_per_day(df: DataFrame) -> DataFrame:
         .agg(
             F.avg("trip_duration_seconds")
             .alias("avg_trip_duration_seconds"),
+            *schema_version_aggregations(df),
         )
         .orderBy("pickup_date")
     )
@@ -33,6 +36,7 @@ def avg_fare_per_borough(df: DataFrame) -> DataFrame:
         df.groupBy("pickup_borough")
         .agg(
             F.avg("fare_amount").alias("avg_fare_amount"),
+            *schema_version_aggregations(df),
         )
         .orderBy("pickup_borough")
     )

@@ -12,6 +12,7 @@ def prepare_pickup_zones(zones: DataFrame) -> DataFrame:
             F.col("zone").alias("pickup_zone"),
             F.col("borough").alias("pickup_borough"),
             F.col("service_zone").alias("pickup_service_zone"),
+            F.col("source_schema_version").alias("pickup_zone_schema_version"),
         )
     )
 
@@ -24,6 +25,7 @@ def prepare_dropoff_zones(zones: DataFrame) -> DataFrame:
             F.col("zone").alias("dropoff_zone"),
             F.col("borough").alias("dropoff_borough"),
             F.col("service_zone").alias("dropoff_service_zone"),
+            F.col("source_schema_version").alias("dropoff_zone_schema_version"),
         )
     )
 
@@ -43,6 +45,7 @@ def prepare_weather(weather: DataFrame) -> DataFrame:
             "pressure_hpa",
             "cloud_cover_pct",
             "weather_condition_code",
+            F.col("source_schema_version").alias("weather_schema_version"),
         )
     )
 
@@ -57,6 +60,7 @@ def prepare_air_quality(air_quality: DataFrame) -> DataFrame:
             "pm25_max_ug_m3",
             "air_quality_observation_count",
             "air_quality_site_count",
+            F.col("source_schema_versions").alias("air_quality_schema_versions"),
         )
     )
 
@@ -69,7 +73,10 @@ def integrate_taxi_trips(
 ) -> DataFrame:
     """Enrich each taxi trip without removing unmatched trips."""
     integrated = (
-        taxi_trips
+        taxi_trips.withColumnRenamed(
+            "source_schema_version",
+            "taxi_schema_version",
+        )
         .join(
             prepare_pickup_zones(zones),
             on="pickup_location_id",

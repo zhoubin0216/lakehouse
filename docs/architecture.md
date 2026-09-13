@@ -1,0 +1,153 @@
+# Project Architecture
+
+## Overall Architecture
+
+```mermaid
+flowchart LR
+    subgraph Sources["Source Data"]
+        TaxiFiles["NYC Yellow Taxi<br/>yellow_tripdata_2024-*.parquet"]
+        ZoneFile["Taxi Zone Lookup<br/>taxi_zone_lookup.csv"]
+        WeatherFile["Weather Hourly<br/>weather.csv"]
+        AirQualityFile["Air Quality Hourly<br/>hourly_88101_2024.csv"]
+    end
+
+    subgraph Config["Configuration"]
+        ConfigYaml["configs/config.yaml<br/>current schema pointers, version history,<br/>column mappings and ingestion settings"]
+    end
+
+    subgraph Runtime["Local Runtime"]
+        Pipeline["src/pipeline.py<br/>conditional step orchestration"]
+        BenchmarkEntry["data_analysis/benchmark.py<br/>independent benchmark entrypoint"]
+        Common["src/common.py<br/>Spark, Delta IO, config helpers"]
+        Viewer["src/view_table.py<br/>Delta table preview"]
+    end
+
+    subgraph Modules["Pipeline Modules"]
+        Consumption["data_consumption<br/>raw table ingestion"]
+        Cleaning["data_cleaning<br/>raw -> normal"]
+        Integration["data_integration<br/>normal -> integrated"]
+        Aggregation["data_aggregation<br/>integrated -> aggregates"]
+        Analysis["data_analysis<br/>benchmark and analysis"]
+    end
+
+    subgraph Metadata["Metadata"]
+        Registry["source_file_registry<br/>file state and schema version"]
+        Runs["ingestion_runs<br/>status, counts, and schema version"]
+    end
+
+    subgraph Lakehouse["Local Delta Lakehouse"]
+        Raw["data/lakehouse/raw<br/>raw Delta tables"]
+        Normal["data/lakehouse/normal<br/>cleaned tables with source versions"]
+        Integrated["data/lakehouse/integrated<br/>wide tables with per-source versions"]
+        Aggregate["data/lakehouse/aggregate<br/>summaries with version sets"]
+        Benchmark["data/lakehouse/benchmark<br/>strategies and version snapshots"]
+        Rejected["data/lakehouse/rejected<br/>consumption and cleaning rejects"]
+    end
+
+    TaxiFiles --> Consumption
+    ZoneFile --> Consumption
+    WeatherFile --> Consumption
+    AirQualityFile --> Consumption
+
+    ConfigYaml --> Pipeline
+    ConfigYaml --> Consumption
+    Common --> Pipeline
+    Pipeline --> Consumption
+    Pipeline --> Cleaning
+    Pipeline --> Integration
+    Pipeline --> Aggregation
+    BenchmarkEntry --> Analysis
+
+    Consumption --> Raw
+    Consumption --> Rejected
+    Consumption --> Registry
+    Consumption --> Runs
+    Raw --> Cleaning
+    Cleaning --> Rejected
+    Cleaning --> Normal
+    Normal --> Integration
+    Integration --> Integrated
+    Integrated --> Aggregation
+    Integrated --> Analysis
+    Aggregation --> Aggregate
+    Analysis --> Benchmark
+
+    Viewer --> Raw
+    Viewer --> Normal
+    Viewer --> Integrated
+    Viewer --> Aggregate
+    Viewer --> Benchmark
+```
+
+## Pipeline Flow
+
+```mermaid
+flowchart TD
+    Start["Run command<br/>python -m src.pipeline STEP"] --> LoadConfig["Load configs/config.yaml"]
+    LoadConfig --> CreateSpark["Create local SparkSession<br/>with Delta Lake support"]
+    CreateSpark --> SelectStep{"STEP"}
+
+    SelectStep -->|raw| RawStep["build_raw_tables()"]
+    SelectStep -->|normal| NormalStep["build_normal_tables()"]
+    SelectStep -->|integrated| IntegratedStep["build_integrated_tables()"]
+    SelectStep -->|aggregate| AggregateStep["build_aggregate_tables()"]
+    SelectStep -->|all| ConditionalRaw["Run raw consumption"]
+    ConditionalRaw --> NewData{"New accepted rows?"}
+    NewData -->|yes| AllSteps["Run normal -> integrated -> aggregate"]
+    NewData -->|no| Stop["Stop; downstream tables unchanged"]
+
+    BenchmarkStart["Run command<br/>python -m src.data_analysis.benchmark"] --> BenchmarkStep["run_benchmark()"]
+
+    RawStep --> RawOutput["Raw Delta tables<br/>plus ingestion metadata"]
+    NormalStep --> NormalOutput["Normal Delta tables"]
+    IntegratedStep --> IntegratedOutput["Integrated taxi trips table"]
+    AggregateStep --> AggregateOutput["Aggregated summary tables"]
+    BenchmarkStep --> BenchmarkOutput["Benchmark tables and results"]
+    ConditionalRaw --> RawOutput
+    AllSteps --> NormalOutput
+    NormalOutput --> IntegratedOutput
+    IntegratedOutput --> AggregateOutput
+```
+
+## Storage Layout
+
+```text
+data/
+  raw/                         Source files copied from the assignment dataset
+  lakehouse/
+    raw/                       Delta tables with row-level schema-version lineage
+    normal/                    Cleaned and standardized Delta tables
+    integrated/                Joined analysis-ready Delta tables
+    aggregate/                 Aggregated Delta tables
+    benchmark/                 Tables for storage strategy comparison
+    rejected/
+      consumption/             Row-level source type conversion failures
+      cleaning/                Business-rule and required-field failures
+  metadata/
+    source_file_registry/      File state and last successful schema version
+    ingestion_runs/            Per-run status, schema version, counts, and errors
+```
+
+## Schema-Version Semantics
+
+`current_schema_version` selects one definition from each dataset's
+`schema_versions` mapping. The selected version is stored as `_schema_version`
+when a raw record is ingested. Moving the pointer does not count as a source-file
+change, so it does not automatically rebuild history. New or changed files
+receive the current version; an explicit backfill is required when historical
+records must be reinterpreted.
+
+Normal, integrated, aggregate, and benchmark tables are derived products. In
+particular, one integrated row may depend on several source datasets with
+different schema versions, so the pipeline does not label it with one ambiguous
+global version. Normal tables retain their source versions; integrated tables
+use source-specific version columns; aggregate tables collect distinct version
+sets; and benchmark results store a JSON version snapshot. Raw tables and
+ingestion metadata remain the authoritative lineage sources.
+
+Source column names and Parquet physical types are validated against the active
+schema contract during consumption. CSV values are converted using declared
+`column_types`; conversion failures are retained in rejected Delta tables with
+their original values and reasons. Cleaning applies semantic validation and
+writes its own rejected records instead of silently dropping them. Missing or
+unexpected source columns are file-level contract failures and fail the run.

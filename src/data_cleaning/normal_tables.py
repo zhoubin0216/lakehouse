@@ -1,7 +1,31 @@
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
+from pyspark.sql.window import Window
 
 from src.common import read_delta, table_path, write_delta
+from src.data_quality import classify_records, write_rejected_records
+
+
+def latest_schema_records(df: DataFrame, key_columns: list[str]) -> DataFrame:
+    """Keep the newest schema/ingestion version for each raw business key."""
+    lineage_columns = ["_schema_version", "_ingestion_timestamp"]
+    missing_columns = [
+        column
+        for column in [*key_columns, *lineage_columns]
+        if column not in df.columns
+    ]
+    if missing_columns:
+        raise ValueError(f"Raw input is missing version lineage columns: {missing_columns}")
+
+    window = Window.partitionBy(*key_columns).orderBy(
+        F.col("_schema_version").desc(),
+        F.col("_ingestion_timestamp").desc_nulls_last(),
+    )
+    return (
+        df.withColumn("_schema_rank", F.row_number().over(window))
+        .filter(F.col("_schema_rank") == 1)
+        .drop("_schema_rank")
+    )
 
 
 def validate_primary_key(
@@ -41,26 +65,50 @@ def validate_primary_key(
 
 
 def clean_taxi_zones(df: DataFrame) -> DataFrame:
+    cleaned, _ = clean_taxi_zones_with_rejections(df)
+    return cleaned
+
+
+def clean_taxi_zones_with_rejections(
+    df: DataFrame,
+) -> tuple[DataFrame, DataFrame]:
     """Create the standardized taxi-zone dimension table."""
-    selected = df.select(
+    selected = latest_schema_records(df, ["location_id"]).select(
         "location_id",
         "borough",
         "zone",
         "service_zone",
+        F.col("_schema_version").alias("source_schema_version"),
+    )
+
+    accepted, rejected = classify_records(
+        selected,
+        stage="cleaning",
+        rejection_rules=[
+            ("location_id is required", F.col("location_id").isNull()),
+            ("borough is required", missing_text("borough")),
+            ("zone is required", missing_text("zone")),
+            ("service_zone is required", missing_text("service_zone")),
+        ],
     )
 
     validate_primary_key(
-        selected,
+        accepted,
         key_columns=["location_id"],
         dataset_name="taxi_zone_lookup",
     )
 
-    return (
-        selected
+    cleaned = (
+        accepted
         .withColumn("borough", F.trim(F.col("borough")))
         .withColumn("zone", F.trim(F.col("zone")))
         .withColumn("service_zone", F.trim(F.col("service_zone")))
     )
+    return cleaned, rejected
+
+
+def missing_text(column: str):
+    return F.col(column).isNull() | (F.trim(F.col(column)) == "")
 
 
 def valid_or_null(
@@ -72,8 +120,15 @@ def valid_or_null(
 
 
 def clean_weather(df: DataFrame) -> DataFrame:
+    cleaned, _ = clean_weather_with_rejections(df)
+    return cleaned
+
+
+def clean_weather_with_rejections(
+    df: DataFrame,
+) -> tuple[DataFrame, DataFrame]:
     """Create one standardized weather observation per hour."""
-    selected = df.select(
+    selected = latest_schema_records(df, ["year", "month", "day", "hour"]).select(
         "year",
         "month",
         "day",
@@ -88,27 +143,34 @@ def clean_weather(df: DataFrame) -> DataFrame:
         F.col("pres").cast("double").alias("pressure_hpa"),
         F.col("cldc").cast("double").alias("cloud_cover_pct"),
         F.col("coco").cast("integer").alias("weather_condition_code"),
+        F.col("_schema_version").alias("source_schema_version"),
     )
 
-    validate_primary_key(
-        selected,
-        key_columns=["year", "month", "day", "hour"],
-        dataset_name="weather_hourly",
+    with_timestamp = selected.withColumn(
+        "event_timestamp",
+        F.make_timestamp_ntz(
+            F.col("year"),
+            F.col("month"),
+            F.col("day"),
+            F.col("hour"),
+            F.lit(0),
+            F.lit(0),
+        ),
+    )
+    accepted, rejected = classify_records(
+        with_timestamp,
+        stage="cleaning",
+        rejection_rules=[
+            ("year is required", F.col("year").isNull()),
+            ("month is required", F.col("month").isNull()),
+            ("day is required", F.col("day").isNull()),
+            ("hour is required", F.col("hour").isNull()),
+            ("invalid event timestamp", F.col("event_timestamp").isNull()),
+        ],
     )
 
     cleaned = (
-        selected
-        .withColumn(
-            "event_timestamp",
-            F.make_timestamp_ntz(
-                F.col("year"),
-                F.col("month"),
-                F.col("day"),
-                F.col("hour"),
-                F.lit(0),
-                F.lit(0),
-            ),
-        )
+        accepted
         .withColumn(
             "relative_humidity_pct",
             valid_or_null(
@@ -152,7 +214,7 @@ def clean_weather(df: DataFrame) -> DataFrame:
         dataset_name="normal_weather_hourly",
     )
 
-    return cleaned.select(
+    result = cleaned.select(
         "event_timestamp",
         F.col("event_timestamp").alias("event_hour"),
         "temperature_c",
@@ -165,18 +227,38 @@ def clean_weather(df: DataFrame) -> DataFrame:
         "pressure_hpa",
         "cloud_cover_pct",
         "weather_condition_code",
+        "source_schema_version",
     )
+    return result, rejected
 
 
 def clean_air_quality(df: DataFrame) -> DataFrame:
+    cleaned, _ = clean_air_quality_with_rejections(df)
+    return cleaned
+
+
+def clean_air_quality_with_rejections(
+    df: DataFrame,
+) -> tuple[DataFrame, DataFrame]:
     """Create one city-level PM2.5 observation per hour."""
     nyc_counties = ["Bronx", "Kings", "Queens"]
     expected_unit = "Micrograms/cubic meter (LC)"
 
     selected = (
-        df.filter(
-            (F.col("state_name") == "New York")
-            & F.col("county_name").isin(*nyc_counties)
+        latest_schema_records(
+            df.filter(
+                (F.col("state_name") == "New York")
+                & F.col("county_name").isin(*nyc_counties)
+            ),
+            [
+                "state_code",
+                "county_code",
+                "site_num",
+                "parameter_code",
+                "poc",
+                "date_local",
+                "time_local",
+            ],
         )
         .select(
             "county_code",
@@ -188,25 +270,37 @@ def clean_air_quality(df: DataFrame) -> DataFrame:
             .cast("double")
             .alias("pm25_ug_m3"),
             "units_of_measure",
+            "_schema_version",
         )
         .withColumn(
             "event_timestamp",
-            F.make_timestamp_ntz(
-                F.year("date_local"),
-                F.month("date_local"),
-                F.dayofmonth("date_local"),
-                F.hour("time_local"),
-                F.minute("time_local"),
-                F.second("time_local"),
-            ),
+            F.to_timestamp(
+                F.concat_ws(
+                    " ",
+                    F.date_format("date_local", "yyyy-MM-dd"),
+                    F.regexp_extract(
+                        F.col("time_local").cast("string"),
+                        r"(\d{1,2}:\d{2}(?::\d{2})?)$",
+                        1,
+                    ),
+                )
+            ).cast("timestamp_ntz"),
         )
     )
 
-    valid = selected.filter(
-        F.col("event_timestamp").isNotNull()
-        & F.col("pm25_ug_m3").isNotNull()
-        & (F.col("pm25_ug_m3") >= 0)
-        & (F.col("units_of_measure") == expected_unit)
+    valid, rejected = classify_records(
+        selected,
+        stage="cleaning",
+        rejection_rules=[
+            ("invalid local date or time", F.col("event_timestamp").isNull()),
+            ("sample measurement is required", F.col("pm25_ug_m3").isNull()),
+            ("sample measurement must be non-negative", F.col("pm25_ug_m3") < 0),
+            (
+                "unexpected unit of measure",
+                F.col("units_of_measure").isNull()
+                | (F.col("units_of_measure") != expected_unit),
+            ),
+        ],
     )
 
     hourly = (
@@ -222,6 +316,9 @@ def clean_air_quality(df: DataFrame) -> DataFrame:
                 "county_code",
                 "site_num",
             ).alias("air_quality_site_count"),
+            F.sort_array(
+                F.collect_set("_schema_version")
+            ).alias("source_schema_versions"),
         )
         .withColumn(
             "event_timestamp",
@@ -243,7 +340,7 @@ def clean_air_quality(df: DataFrame) -> DataFrame:
         dataset_name="normal_air_quality_hourly",
     )
 
-    return hourly.select(
+    result = hourly.select(
         "event_timestamp",
         "event_hour",
         "pm25_avg_ug_m3",
@@ -251,15 +348,25 @@ def clean_air_quality(df: DataFrame) -> DataFrame:
         "pm25_max_ug_m3",
         "air_quality_observation_count",
         "air_quality_site_count",
+        "source_schema_versions",
         "event_year",
         "event_month",
     )
+    return result, rejected
 
 
 def clean_taxi_trips(
     df: DataFrame,
     dataset_config: dict,
 ) -> DataFrame:
+    cleaned, _ = clean_taxi_trips_with_rejections(df, dataset_config)
+    return cleaned
+
+
+def clean_taxi_trips_with_rejections(
+    df: DataFrame,
+    dataset_config: dict,
+) -> tuple[DataFrame, DataFrame]:
     """Clean taxi trips and derive fields needed for integration."""
     rules = dataset_config["quality_rules"]
     pickup_start = rules["pickup_start"]
@@ -270,8 +377,9 @@ def clean_taxi_trips(
         "timestampdiff(SECOND, pickup_timestamp, dropoff_timestamp)"
     )
 
-    selected = df.select(
+    selected = latest_schema_records(df, ["_record_hash"]).select(
         F.col("_record_hash").alias("trip_id"),
+        F.col("_schema_version").alias("source_schema_version"),
         "vendor_id",
         "pickup_timestamp",
         "dropoff_timestamp",
@@ -293,28 +401,45 @@ def clean_taxi_trips(
         "airport_fee",
     )
 
-    valid_trips = (
-        selected
-        .filter(
-            (F.col("pickup_timestamp") >=
-             F.lit(pickup_start).cast("timestamp_ntz"))
-            & (F.col("pickup_timestamp") <
-               F.lit(pickup_end).cast("timestamp_ntz"))
-        )
-        .filter(F.col("trip_id").isNotNull())
-        .filter(F.col("pickup_timestamp").isNotNull())
-        .filter(F.col("dropoff_timestamp").isNotNull())
-        .filter(F.col("pickup_location_id").isNotNull())
-        .filter(F.col("dropoff_location_id").isNotNull())
-        .withColumn("trip_duration_seconds", duration_seconds)
-        .filter(
-            (F.col("trip_duration_seconds") > 0)
-            & (F.col("trip_duration_seconds") <= max_duration)
-        )
-        .dropDuplicates(["trip_id"])
+    with_duration = selected.withColumn(
+        "trip_duration_seconds",
+        duration_seconds,
+    )
+    pickup_present = F.col("pickup_timestamp").isNotNull()
+    timestamps_present = pickup_present & F.col("dropoff_timestamp").isNotNull()
+    valid_trips, rejected = classify_records(
+        with_duration,
+        stage="cleaning",
+        rejection_rules=[
+            ("trip_id is required", F.col("trip_id").isNull()),
+            ("pickup timestamp is required", F.col("pickup_timestamp").isNull()),
+            ("dropoff timestamp is required", F.col("dropoff_timestamp").isNull()),
+            ("pickup location is required", F.col("pickup_location_id").isNull()),
+            ("dropoff location is required", F.col("dropoff_location_id").isNull()),
+            (
+                "pickup timestamp is outside the configured period",
+                pickup_present
+                & (
+                    (F.col("pickup_timestamp") < F.lit(pickup_start).cast("timestamp_ntz"))
+                    | (F.col("pickup_timestamp") >= F.lit(pickup_end).cast("timestamp_ntz"))
+                ),
+            ),
+            (
+                "trip duration could not be calculated",
+                timestamps_present & F.col("trip_duration_seconds").isNull(),
+            ),
+            (
+                "trip duration is outside the allowed range",
+                F.col("trip_duration_seconds").isNotNull()
+                & (
+                    (F.col("trip_duration_seconds") <= 0)
+                    | (F.col("trip_duration_seconds") > max_duration)
+                ),
+            ),
+        ],
     )
 
-    return (
+    cleaned = (
         valid_trips
         .withColumn(
             "has_invalid_distance",
@@ -362,6 +487,7 @@ def clean_taxi_trips(
             F.month("pickup_timestamp"),
         )
     )
+    return cleaned, rejected
 
 
 def build_normal_tables(spark: SparkSession, config: dict) -> None:
@@ -371,40 +497,45 @@ def build_normal_tables(spark: SparkSession, config: dict) -> None:
         spark,
         table_path(config, zone_config["raw_table"]),
     )
-    zone_normal = clean_taxi_zones(zone_raw)
+    zone_normal, zone_rejected = clean_taxi_zones_with_rejections(zone_raw)
     write_delta(
         zone_normal,
         table_path(config, zone_config["normal_table"]),
     )
+    save_cleaning_rejections(zone_rejected, config, "taxi_zone_lookup")
 
     weather_config = config["datasets"]["weather_hourly"]
     weather_raw = read_delta(
         spark,
         table_path(config, weather_config["raw_table"]),
     )
-    weather_normal = clean_weather(weather_raw)
+    weather_normal, weather_rejected = clean_weather_with_rejections(weather_raw)
     write_delta(
         weather_normal,
         table_path(config, weather_config["normal_table"]),
     )
+    save_cleaning_rejections(weather_rejected, config, "weather_hourly")
     air_quality_config = config["datasets"]["air_quality"]
     air_quality_raw = read_delta(
         spark,
         table_path(config, air_quality_config["raw_table"]),
     )
-    air_quality_normal = clean_air_quality(air_quality_raw)
+    air_quality_normal, air_quality_rejected = clean_air_quality_with_rejections(
+        air_quality_raw
+    )
     write_delta(
         air_quality_normal,
         table_path(config, air_quality_config["normal_table"]),
         partitions=air_quality_config.get("partitions"),
     )
+    save_cleaning_rejections(air_quality_rejected, config, "air_quality")
 
     taxi_config = config["datasets"]["yellow_taxi_trips"]
     taxi_raw = read_delta(
         spark,
         table_path(config, taxi_config["raw_table"]),
     )
-    taxi_normal = clean_taxi_trips(
+    taxi_normal, taxi_rejected = clean_taxi_trips_with_rejections(
         taxi_raw,
         taxi_config,
     )
@@ -413,3 +544,19 @@ def build_normal_tables(spark: SparkSession, config: dict) -> None:
         table_path(config, taxi_config["normal_table"]),
         partitions=taxi_config.get("partitions"),
     )
+    save_cleaning_rejections(taxi_rejected, config, "yellow_taxi_trips")
+
+
+def save_cleaning_rejections(
+    rejected: DataFrame,
+    config: dict,
+    dataset_name: str,
+) -> None:
+    rejected_count = write_rejected_records(
+        rejected,
+        config,
+        stage="cleaning",
+        dataset_name=dataset_name,
+        mode="overwrite",
+    )
+    print(f"{dataset_name}: wrote {rejected_count} cleaning rejected records")

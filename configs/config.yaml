@@ -11,6 +11,9 @@ data_consumption:
   deduplicate_records: false
   checksum_max_bytes: 10485760
 
+data_quality:
+  rejected_table_root: rejected
+
 data_integration:
   integrated_taxi_trips_table: integrated/integrated_taxi_trips
   partitions: [pickup_year, pickup_month]
@@ -22,168 +25,255 @@ data_aggregation:
 
 datasets:
   yellow_taxi_trips:
+    current_schema_version: 1
     quality_rules:
       pickup_start: "2024-01-01 00:00:00"
       pickup_end_exclusive: "2024-04-01 00:00:00"
       max_trip_duration_seconds: 86400
       max_trip_distance: 500.0
-    format: parquet
     ingestion_mode: incremental
     source: yellow_tripdata_2024-*.parquet
     raw_table: raw/yellow_taxi_trips
     normal_table: normal/yellow_taxi_trips
     timestamp: pickup_timestamp
     partitions: [pickup_year, pickup_month]
-    expected_columns:
-      - VendorID
-      - tpep_pickup_datetime
-      - tpep_dropoff_datetime
-      - passenger_count
-      - trip_distance
-      - RatecodeID
-      - store_and_fwd_flag
-      - PULocationID
-      - DOLocationID
-      - payment_type
-      - fare_amount
-      - extra
-      - mta_tax
-      - tip_amount
-      - tolls_amount
-      - improvement_surcharge
-      - total_amount
-      - congestion_surcharge
-      - Airport_fee
-    columns:
-      VendorID: vendor_id
-      tpep_pickup_datetime: pickup_timestamp
-      tpep_dropoff_datetime: dropoff_timestamp
-      passenger_count: passenger_count
-      trip_distance: trip_distance
-      RatecodeID: ratecode_id
-      store_and_fwd_flag: store_and_fwd_flag
-      PULocationID: pickup_location_id
-      DOLocationID: dropoff_location_id
-      payment_type: payment_type
-      fare_amount: fare_amount
-      total_amount: total_amount
-      congestion_surcharge: congestion_surcharge
-      Airport_fee: airport_fee
+    schema_versions:
+      "1":
+        format: parquet
+        column_types:
+          VendorID: int
+          tpep_pickup_datetime: timestamp_ntz
+          tpep_dropoff_datetime: timestamp_ntz
+          passenger_count: bigint
+          trip_distance: double
+          RatecodeID: bigint
+          store_and_fwd_flag: string
+          PULocationID: int
+          DOLocationID: int
+          payment_type: bigint
+          fare_amount: double
+          extra: double
+          mta_tax: double
+          tip_amount: double
+          tolls_amount: double
+          improvement_surcharge: double
+          total_amount: double
+          congestion_surcharge: double
+          Airport_fee: double
+        expected_columns:
+          - VendorID
+          - tpep_pickup_datetime
+          - tpep_dropoff_datetime
+          - passenger_count
+          - trip_distance
+          - RatecodeID
+          - store_and_fwd_flag
+          - PULocationID
+          - DOLocationID
+          - payment_type
+          - fare_amount
+          - extra
+          - mta_tax
+          - tip_amount
+          - tolls_amount
+          - improvement_surcharge
+          - total_amount
+          - congestion_surcharge
+          - Airport_fee
+        columns:
+          VendorID: vendor_id
+          tpep_pickup_datetime: pickup_timestamp
+          tpep_dropoff_datetime: dropoff_timestamp
+          passenger_count: passenger_count
+          trip_distance: trip_distance
+          RatecodeID: ratecode_id
+          store_and_fwd_flag: store_and_fwd_flag
+          PULocationID: pickup_location_id
+          DOLocationID: dropoff_location_id
+          payment_type: payment_type
+          fare_amount: fare_amount
+          total_amount: total_amount
+          congestion_surcharge: congestion_surcharge
+          Airport_fee: airport_fee
 
   taxi_zone_lookup:
-    format: csv
+    current_schema_version: 1
     ingestion_mode: incremental
     source: taxi_zone_lookup.csv
-    read_options:
-      header: true
-      inferSchema: true
     raw_table: raw/taxi_zone_lookup
     normal_table: normal/dim_taxi_zone
     primary_key: [location_id]
     partitions: []
-    expected_columns:
-      - LocationID
-      - Borough
-      - Zone
-      - service_zone
-    columns:
-      LocationID: location_id
-      Borough: borough
-      Zone: zone
-      service_zone: service_zone
+    schema_versions:
+      "1":
+        format: csv
+        read_options:
+          header: true
+          inferSchema: false
+        column_types:
+          LocationID: int
+          Borough: string
+          Zone: string
+          service_zone: string
+        expected_columns:
+          - LocationID
+          - Borough
+          - Zone
+          - service_zone
+        columns:
+          LocationID: location_id
+          Borough: borough
+          Zone: zone
+          service_zone: service_zone
 
   weather_hourly:
-    format: csv
+    current_schema_version: 1
     ingestion_mode: incremental
     source: weather.csv
-    read_options:
-      header: true
-      inferSchema: true
     raw_table: raw/weather_hourly
     normal_table: normal/weather_hourly
     timestamp: event_timestamp
     primary_key: [year, month, day, hour]
     partitions: []
-    expected_columns:
-      - year
-      - month
-      - day
-      - hour
-      - temp
-      - temp_source
-      - rhum
-      - rhum_source
-      - prcp
-      - prcp_source
-      - snwd
-      - snwd_source
-      - wdir
-      - wdir_source
-      - wspd
-      - wspd_source
-      - wpgt
-      - wpgt_source
-      - pres
-      - pres_source
-      - cldc
-      - cldc_source
-      - coco
-      - coco_source
-    columns: {}
+    schema_versions:
+      "1":
+        format: csv
+        read_options:
+          header: true
+          inferSchema: false
+        column_types:
+          year: int
+          month: int
+          day: int
+          hour: int
+          temp: double
+          temp_source: string
+          rhum: double
+          rhum_source: string
+          prcp: double
+          prcp_source: string
+          snwd: double
+          snwd_source: string
+          wdir: double
+          wdir_source: string
+          wspd: double
+          wspd_source: string
+          wpgt: double
+          wpgt_source: string
+          pres: double
+          pres_source: string
+          cldc: double
+          cldc_source: string
+          coco: int
+          coco_source: string
+        expected_columns:
+          - year
+          - month
+          - day
+          - hour
+          - temp
+          - temp_source
+          - rhum
+          - rhum_source
+          - prcp
+          - prcp_source
+          - snwd
+          - snwd_source
+          - wdir
+          - wdir_source
+          - wspd
+          - wspd_source
+          - wpgt
+          - wpgt_source
+          - pres
+          - pres_source
+          - cldc
+          - cldc_source
+          - coco
+          - coco_source
+        columns: {}
 
   air_quality:
-    format: csv
+    current_schema_version: 1
     ingestion_mode: incremental
     source: hourly_88101_2024.csv
-    read_options:
-      header: true
-      inferSchema: true
     raw_table: raw/air_quality
     normal_table: normal/air_quality_hourly
     timestamp: event_timestamp
     partitions: [event_year, event_month]
-    expected_columns:
-      - State Code
-      - County Code
-      - Site Num
-      - Parameter Code
-      - POC
-      - Latitude
-      - Longitude
-      - Datum
-      - Parameter Name
-      - Date Local
-      - Time Local
-      - Date GMT
-      - Time GMT
-      - Sample Measurement
-      - Units of Measure
-      - MDL
-      - Uncertainty
-      - Qualifier
-      - Method Type
-      - Method Code
-      - Method Name
-      - State Name
-      - County Name
-      - Date of Last Change
-    columns:
-      State Code: state_code
-      County Code: county_code
-      Site Num: site_num
-      Parameter Code: parameter_code
-      POC: poc
-      Latitude: latitude
-      Longitude: longitude
-      Parameter Name: parameter_name
-      Date Local: date_local
-      Time Local: time_local
-      Date GMT: date_gmt
-      Time GMT: time_gmt
-      Sample Measurement: sample_measurement
-      Units of Measure: units_of_measure
-      State Name: state_name
-      County Name: county_name
+    schema_versions:
+      "1":
+        format: csv
+        read_options:
+          header: true
+          inferSchema: false
+        column_types:
+          State Code: string
+          County Code: string
+          Site Num: string
+          Parameter Code: string
+          POC: int
+          Latitude: double
+          Longitude: double
+          Datum: string
+          Parameter Name: string
+          Date Local: date
+          Time Local: string
+          Date GMT: date
+          Time GMT: string
+          Sample Measurement: double
+          Units of Measure: string
+          MDL: double
+          Uncertainty: double
+          Qualifier: string
+          Method Type: string
+          Method Code: string
+          Method Name: string
+          State Name: string
+          County Name: string
+          Date of Last Change: date
+        expected_columns:
+          - State Code
+          - County Code
+          - Site Num
+          - Parameter Code
+          - POC
+          - Latitude
+          - Longitude
+          - Datum
+          - Parameter Name
+          - Date Local
+          - Time Local
+          - Date GMT
+          - Time GMT
+          - Sample Measurement
+          - Units of Measure
+          - MDL
+          - Uncertainty
+          - Qualifier
+          - Method Type
+          - Method Code
+          - Method Name
+          - State Name
+          - County Name
+          - Date of Last Change
+        columns:
+          State Code: state_code
+          County Code: county_code
+          Site Num: site_num
+          Parameter Code: parameter_code
+          POC: poc
+          Latitude: latitude
+          Longitude: longitude
+          Parameter Name: parameter_name
+          Date Local: date_local
+          Time Local: time_local
+          Date GMT: date_gmt
+          Time GMT: time_gmt
+          Sample Measurement: sample_measurement
+          Units of Measure: units_of_measure
+          State Name: state_name
+          County Name: county_name
 
 benchmark:
   unpartitioned_table: benchmark/taxi_unpartitioned

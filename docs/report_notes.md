@@ -18,11 +18,16 @@ Use this file as the shared source for the final 3-5 page design report.
 ## Data Consumption
 
 - Use source file registry instead of only recording consumed file names.
-- Track each source file by path, size, modification time, optional checksum, and ingestion status.
-- Add lineage columns to raw tables: `_source_file`, `_source_file_size`, `_source_modified_time`, `_ingestion_run_id`, `_ingestion_timestamp`, `_record_hash`.
+- Track each source file by path, size, modification time, optional checksum, schema version, and ingestion status.
+- Add lineage columns to raw tables: `_schema_version`, `_source_file`, `_source_file_size`, `_source_modified_time`, `_ingestion_run_id`, `_ingestion_timestamp`, `_record_hash`.
 - Consume only new or changed files.
 - Write raw Delta data first, then update registry and ingestion metadata after the write succeeds.
 - Deduplicate raw records using `_record_hash` or dataset business keys to reduce duplicate ingestion after retries.
+- Preserve all source contracts under `schema_versions` and select the ingestion contract through `current_schema_version`.
+- Treat the selected `_schema_version` as immutable ingestion-time lineage. Moving the current-version pointer alone does not re-consume unchanged files or rewrite old raw rows; historical reinterpretation requires an explicit backfill.
+- Define an explicit `column_types` entry for every expected column in every schema version.
+- Require exact Parquet physical types; read CSV fields as strings and use safe conversion rather than schema inference.
+- Write row-level CSV conversion failures to `rejected/consumption/<dataset>` with original values and `_rejection_reasons`; treat missing or unexpected columns as a failed ingestion run.
 
 ## Common Data Model
 
@@ -32,6 +37,9 @@ Use this file as the shared source for the final 3-5 page design report.
 
 ## Data Cleaning and Standardization
 
+- For repeated lookup or hourly business keys, prefer the highest source schema version and then the latest ingestion timestamp.
+- Preserve a scalar `source_schema_version` for one-record Normal outputs and a sorted `source_schema_versions` set for air-quality hourly aggregates.
+- Write records that violate required-field, timestamp, project-period, duration, measurement, or unit rules to `rejected/cleaning/<dataset>` instead of silently dropping them.
 - Validate that lookup and hourly-table primary keys are present, non-null, and unique.
 - Treat all project event times as local wall-clock values stored as `timestamp_ntz`.
 - Construct weather timestamps from the source `year`, `month`, `day`, and `hour` fields.
@@ -53,6 +61,7 @@ Use this file as the shared source for the final 3-5 page design report.
 
 ## Integration Strategy
 
+- Preserve source-specific versions as `taxi_schema_version`, pickup/dropoff zone versions, `weather_schema_version`, and `air_quality_schema_versions`; do not assign one ambiguous version to the multi-source row.
 - Join taxi trips to the taxi-zone dimension twice to derive pickup and dropoff zone, borough, and service-zone attributes.
 - Match weather and air quality to each trip by the local pickup hour.
 - Use left joins so missing contextual observations do not remove taxi trips.
@@ -82,3 +91,4 @@ Compare two taxi trip storage strategies:
 
 - Monthly partitioning: `pickup_year`, `pickup_month`.
 - Daily partitioning: `pickup_date`.
+- Preserve source-specific version columns in benchmark tables and include a `schema_versions` JSON snapshot in every benchmark result row.
