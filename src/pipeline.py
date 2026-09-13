@@ -7,12 +7,7 @@ from src.data_aggregation.aggregate_tables import build_aggregate_tables
 from src.data_cleaning.normal_tables import build_normal_tables
 from src.data_consumption.raw_tables import build_raw_tables
 from src.data_integration.integrated_tables import build_integrated_tables
-from src.data_analysis.analytical_queries import run_analytical_queries
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("step", choices=["raw", "normal", "integrated", "aggregate", "benchmark", "all", "queries"])
-    args = parser.parse_args()
 def run_incremental_pipeline(spark, config: dict) -> dict:
     """Consume sources and rebuild derived tables only when new valid rows arrive."""
     ingestion = build_raw_tables(spark, config)
@@ -41,7 +36,6 @@ def run_pipeline_step(spark, config: dict, step: str):
         "integrated": build_integrated_tables,
         "aggregate": build_aggregate_tables,
 
-        "queries": run_analytical_queries,
     }
     return steps[step](spark, config)
 
@@ -52,7 +46,7 @@ def main() -> None:
     )
     parser.add_argument(
         "step",
-        choices=["raw", "normal", "integrated", "aggregate", "all", "queries"],
+        choices=["raw", "normal", "integrated", "aggregate", "all"],
     )
     args = parser.parse_args()
 
