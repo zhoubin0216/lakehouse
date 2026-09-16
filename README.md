@@ -318,3 +318,124 @@ data/lakehouse/analysis/baseline_queries/baseline_query_times.csv
 
 The median execution time is used as the baseline query latency for
 subsequent performance comparisons.
+
+## Controlled Optimization Benchmark (Week 2 Tasks 3 and 5)
+
+The original query library is unchanged. The controlled baseline explicitly
+disables AQE, automatic broadcast, and adaptive broadcast; Spark table caches
+are cleared at variant boundaries. This baseline is different from the earlier
+default-configuration `query_benchmark` run. Baseline still uses existing Delta
+partitioning, column pruning, and other normal Spark optimizations.
+
+Run all six queries with one warm-up and five measured executions:
+
+```bash
+.venv/bin/python -m src.data_analysis.optimization_benchmark
+```
+
+Compare Q1 against caching the full integrated table:
+
+```bash
+.venv/bin/python -m src.data_analysis.optimization_benchmark \
+  --query monthly_zone_demand --variant baseline cache
+```
+
+Omit `--query` to compare all six queries. The cache is built once and shared
+across the selected queries; its build cost is NOT included in query latency.
+It uses `MEMORY_AND_DISK`, and actual cached memory/disk bytes and cached
+partition counts are recorded. A cache variant automatically includes baseline.
+The framework's `Variant` interface supports future Spark setting overrides,
+cache views, and equivalent SQL overrides. Available variants: baseline,
+cache, broadcast, aqe, combined. Broadcast hints affect Q3/Q4/Q6; other queries
+have no applicable join and their broadcast arms are no-op controls.
+
+Settings are under `data_analysis.optimization_benchmark` in YAML. Each run
+creates a unique UTC timestamp/ID directory; previous outputs are not overwritten:
+
+```text
+data/lakehouse/analysis/optimization/<run_id>/
+  environment.json          Versions, Git state, methodology, pinned Delta inputs
+  status.json               running / completed / failed
+  timings.csv               Every measured execution
+  benchmark_results.csv     Median, mean, min/max, speedup, plan paths
+  validation_results.csv    Every run checked against baseline and its variant
+  <variant>/
+    configuration.json      Effective Spark settings and cache cost/storage
+    <query>.sql             Exact SQL used
+    plans/<query>_initial.txt
+    plans/<query>_final.txt  Formatted plan of the SAME DataFrame after collect()
+    metrics/<query>_run_N.json  Runtime SQL metrics, scans, joins and AQE stages
+    results/<query>.json     Schema, duplicate-preserving hash, canonical rows
+```
+
+Delta input versions are pinned for the entire experiment. Input sizes and file
+counts come from the active Delta snapshot, not obsolete historical files.
+Elapsed time includes `spark.sql()` construction and `collect()`, excluding
+input registration, cache build, validation and plan export. Results must be
+small analytical outputs: they are collected to the driver, and the configured
+row cap is checked AFTER collection (not a memory guarantee for arbitrary SQL).
+
+Validation ignores output order but preserves duplicates. Ordered column names
+and SQL types must match; nullability/metadata may differ. Integers, decimals,
+strings, dates and other non-floating values are exact. Top-level float/double
+columns use configured absolute/relative tolerances, with explicit NaN/null
+handling. Exact hashes may differ while the tolerance check passes. A failed
+check stops the experiment with a failed status and diagnostic validation CSV.
+
+These are warmed-access measurements: OS file cache is not cleared. The individual
+CLI uses baseline-first order. A correctness reference is collected before timing;
+this reference is separate from measured baseline runs. A speedup below 1 is valid.
+
+### Complete pre-Task-4 experiment suite
+
+```bash
+.venv/bin/python -m src.data_analysis.optimization_suite
+```
+
+This runs serially; do NOT run tests/other Spark jobs while it measures performance.
+Allow several minutes. All tables are read-only and original Task 1/2 SQL is unchanged.
+The suite performs:
+
+1. Three seeded, randomized-order blocks of all six queries under baseline,
+   full-table cache, explicit broadcast, AQE-only and broadcast+AQE.
+2. Three blocks of January Q1: function-based time filter and timestamp-range
+   filter, each with/without equivalent year/month partition predicates. The
+   range-filter control captures any benefit already provided by Delta statistics.
+3. Three blocks of AQE off/on for Q1/Q4 with the SAME 32 initial shuffle partitions
+   in both arms, separately from the main 4-partition experiment.
+4. Frozen candidate selection (>=5% median improvement and majority block wins,
+   applicable variants only), followed by three independent confirmation blocks.
+   If none qualifies, baseline is retained. Confirmation regressions are reported.
+
+Each block has one warm-up and five timed runs; no formal significance claim is
+made from this small number of blocks. AQE dynamic broadcast stays disabled so
+AQE and explicit broadcast effects are separated. Cache build cost and actual
+memory/disk placement are recorded separately. Pruning adds equivalent predicates
+only after checking partition/date consistency on the complete pinned dataset.
+
+Outputs are under `data/lakehouse/analysis/optimization/suites/<suite_id>/`:
+
+- `aggregate_results.csv`: all configurations pooled across blocks.
+- `final_query_comparison.csv`: six-query independent confirmation summary.
+- `all_timings.csv`, `all_validations.csv`: auditable per-run evidence.
+- `plan_evidence.json`: representative runtime scans, joins and AQE changes.
+- `suite_manifest.json`: seed, environment, snapshot versions, order and job paths.
+- `benchmark_report.md`: measured methodology, results, trade-offs and evaluation.
+
+A compact, Git-visible report/evidence bundle is exported to
+`docs/benchmarks/week2/<suite_id>/` (unique directory, no overwriting). It includes
+representative SQL, configuration, initial/final formatted plans and runtime
+metrics. The ignored `data/` output does not need to be committed or uploaded.
+`--export-root` and `--output-root` can customize destinations; `--blocks 1` is a
+smoke run, not the default three-block report. See `suite` settings in YAML.
+
+Task 4 product creation, storage overhead, refresh timing and product-vs-on-demand
+comparisons are explicitly pending. No product tables or duplicate fact layouts
+are created by this suite. Existing weather codes and Q4 semantics should be
+confirmed with their owner before final submission.
+
+Run the test suite:
+
+```bash
+.venv/bin/pytest -q
+```
