@@ -301,3 +301,19 @@ benchmark:
 data_analysis:
   baseline_results_root: analysis/baseline_queries
   baseline_timing_file: analysis/baseline_queries/baseline_query_times.csv
+  optimization_benchmark:
+    results_root: analysis/optimization
+    warmup_runs: 1
+    measured_runs: 5
+    max_result_rows: 100000
+    absolute_tolerance: 0.00000001
+    relative_tolerance: 0.000001
+    # Keep the existing platform's four shuffle partitions for now.
+    # Any later tuning must use the same initial value in both variants.
+    spark_config:
+      spark.sql.shuffle.partitions: "4"
+    suite:
+      blocks: 3
+      seed: 2221
+      year: 2024
+      month: 1
