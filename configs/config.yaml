@@ -301,6 +301,45 @@ benchmark:
 data_analysis:
   baseline_results_root: analysis/baseline_queries
   baseline_timing_file: analysis/baseline_queries/baseline_query_times.csv
+  products:
+    catalog_table: analysis/product_catalog
+    definitions:
+      daily_mobility_summary:
+        table: analysis/products/daily_mobility_summary
+        schema_version: 1
+        partitions: []
+        grain: one row per pickup date
+        intended_users: municipal mobility planners and operations teams
+        description: Daily demand, passenger, distance, duration, revenue, and peak-hour metrics.
+        materialization_reason: Avoids repeatedly scanning trip-level data for daily operational reporting.
+      taxi_zone_statistics:
+        table: analysis/products/taxi_zone_statistics
+        schema_version: 1
+        partitions: []
+        grain: one row per pickup month and taxi zone
+        intended_users: transport planners and taxi operators
+        description: Monthly demand and trip characteristics for each pickup taxi zone.
+        materialization_reason: Reuses an expensive high-cardinality zone aggregation across reports.
+      weather_impact_summary:
+        table: analysis/products/weather_impact_summary
+        schema_version: 2
+        partitions: []
+        grain: one row per pickup month and weather condition
+        intended_users: mobility operations and emergency planning teams
+        description: Monthly demand, distance, duration, and fare metrics by named Meteostat weather condition.
+        materialization_reason: Makes repeated weather-impact comparisons queryable without rescanning trips.
+      air_quality_impact_summary:
+        table: analysis/products/air_quality_impact_summary
+        schema_version: 1
+        partitions: []
+        grain: one row per pickup month and PM2.5 category
+        intended_users: environmental and transport policy analysts
+        description: Monthly mobility metrics grouped into project-defined PM2.5 concentration bands.
+        materialization_reason: Standardizes PM2.5 bands and avoids repeated classification and aggregation.
+  report:
+    output_file: data/reports/task4_data_products_report.html
+    title: Urban Mobility Data Products
+    subtitle: NYC Yellow Taxi
   optimization_benchmark:
     results_root: analysis/optimization
     warmup_runs: 1

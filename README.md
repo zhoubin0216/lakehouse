@@ -22,10 +22,11 @@ src/data_consumption/   source files -> raw Delta tables
 src/data_cleaning/      raw -> normal Delta tables
 src/data_integration/   normal -> integrated_taxi_trips
 src/data_aggregation/   integrated -> summary tables
-src/data_analysis/      benchmark and result analysis
+src/data_analysis/      queries, reusable products, and optimization benchmarks
 tests/                  Lightweight tests
 docs/report_notes.md    Notes for the final report
 docs/architecture.md    Project architecture diagrams
+docs/week2_task4.md     Task 4 product design and operating notes
 data/                   Raw data and generated Delta tables, ignored by Git
 ```
 
@@ -430,9 +431,76 @@ metrics. The ignored `data/` output does not need to be committed or uploaded.
 smoke run, not the default three-block report. See `suite` settings in YAML.
 
 Task 4 product creation, storage overhead, refresh timing and product-vs-on-demand
-comparisons are explicitly pending. No product tables or duplicate fact layouts
-are created by this suite. Existing weather codes and Q4 semantics should be
-confirmed with their owner before final submission.
+comparisons are kept outside this optimization suite. Existing weather codes and
+Q4 semantics should be confirmed with their owner before final submission.
+
+## Reusable Analytical Data Products (Week 2 Task 4)
+
+Task 4 is an independent analytical workload and is not part of
+`python -m src.pipeline all`. Refresh all four products from one pinned version
+of the Integrated Delta table:
+
+```bash
+.venv/bin/python -m src.data_analysis products
+```
+
+Refresh one product:
+
+```bash
+.venv/bin/python -m src.data_analysis products \
+  --product taxi_zone_statistics
+```
+
+The following products are written under `data/lakehouse/analysis/products/`:
+
+| Product | Grain | Intended use |
+|---|---|---|
+| `daily_mobility_summary` | pickup date | daily operational mobility reporting |
+| `taxi_zone_statistics` | pickup month and taxi zone | zone planning and taxi operations |
+| `weather_impact_summary` | pickup month and named weather condition | weather-impact comparisons |
+| `air_quality_impact_summary` | pickup month and PM2.5 band | environmental mobility analysis |
+
+The products are deliberately unpartitioned because the aggregations are small;
+pre-aggregation provides the main query-speed benefit without creating tiny
+partition files. Every product row records its product schema version, source
+Integrated table and Delta version, source schema-version snapshot, creation
+time, and refresh time.
+
+`analysis/product_catalog` stores one row per product with its users, grain,
+materialization reason, source snapshot, first creation and latest refresh time,
+row count, active Delta storage bytes, refresh duration, and partition strategy.
+Refreshing one product preserves the catalog records for the other products.
+
+The PM2.5 categories are stable project-defined analytical bands used to make
+reports comparable; they are not presented as health advice. Query execution is
+also available through the independent analysis entry:
+
+```bash
+.venv/bin/python -m src.data_analysis queries
+```
+
+`weather_impact_summary` keeps the source `weather_condition_code` and adds the
+human-readable `weather_condition` value defined by Meteostat, such as `Clear`,
+`Overcast`, or `Light Rain`. The mapping in
+`src/data_analysis/weather_conditions.py` is shared by products and reports.
+
+Generate a standalone visual report from the four product tables:
+
+```bash
+.venv/bin/python -m src.data_analysis report
+```
+
+The default output is `data/reports/task4_data_products_report.html`. It embeds
+the aggregated report data and rendering code, so it can be opened directly in
+a browser without a web server or external JavaScript packages. Use `--output`
+to select another destination.
+
+Preview a product or its catalog through the existing Delta viewer:
+
+```bash
+.venv/bin/python -m src.view_table analysis/products/daily_mobility_summary --limit 10
+.venv/bin/python -m src.view_table analysis/product_catalog --limit 10
+```
 
 Run the test suite:
 
