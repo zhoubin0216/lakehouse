@@ -17,7 +17,7 @@ flowchart LR
 
     subgraph Runtime["Local Runtime"]
         Pipeline["src/pipeline.py<br/>conditional step orchestration"]
-        BenchmarkEntry["data_analysis/benchmark.py<br/>independent benchmark entrypoint"]
+        AnalysisEntry["src/data_analysis/__main__.py<br/>independent analysis entrypoint"]
         Common["src/common.py<br/>Spark, Delta IO, config helpers"]
         Viewer["src/view_table.py<br/>Delta table preview"]
     end
@@ -27,7 +27,7 @@ flowchart LR
         Cleaning["data_cleaning<br/>raw -> normal"]
         Integration["data_integration<br/>normal -> integrated"]
         Aggregation["data_aggregation<br/>integrated -> aggregates"]
-        Analysis["data_analysis<br/>benchmark and analysis"]
+        Analysis["data_analysis<br/>queries, products, and benchmarks"]
     end
 
     subgraph Metadata["Metadata"]
@@ -41,6 +41,9 @@ flowchart LR
         Integrated["data/lakehouse/integrated<br/>wide tables with per-source versions"]
         Aggregate["data/lakehouse/aggregate<br/>summaries with version sets"]
         Benchmark["data/lakehouse/benchmark<br/>strategies and version snapshots"]
+        Products["data/lakehouse/analysis/products<br/>four reusable Delta products"]
+        ProductCatalog["analysis/product_catalog<br/>refresh and product metadata"]
+        HtmlReport["data/reports<br/>standalone Task 4 HTML report"]
         Rejected["data/lakehouse/rejected<br/>consumption and cleaning rejects"]
     end
 
@@ -56,7 +59,7 @@ flowchart LR
     Pipeline --> Cleaning
     Pipeline --> Integration
     Pipeline --> Aggregation
-    BenchmarkEntry --> Analysis
+    AnalysisEntry --> Analysis
 
     Consumption --> Raw
     Consumption --> Rejected
@@ -70,13 +73,19 @@ flowchart LR
     Integrated --> Aggregation
     Integrated --> Analysis
     Aggregation --> Aggregate
+    Aggregate --> Analysis
+    Analysis --> Products
+    Analysis --> ProductCatalog
     Analysis --> Benchmark
+    Products --> HtmlReport
 
     Viewer --> Raw
     Viewer --> Normal
     Viewer --> Integrated
     Viewer --> Aggregate
     Viewer --> Benchmark
+    Viewer --> Products
+    Viewer --> ProductCatalog
 ```
 
 ## Pipeline Flow
@@ -120,12 +129,18 @@ data/
     integrated/                Joined analysis-ready Delta tables
     aggregate/                 Aggregated Delta tables
     benchmark/                 Tables for storage strategy comparison
+    analysis/
+      products/                Four reusable analytical Delta products
+      product_catalog/         Product contracts, refresh metrics, and lineage
     rejected/
       consumption/             Row-level source type conversion failures
       cleaning/                Business-rule and required-field failures
   metadata/
     source_file_registry/      File state and last successful schema version
     ingestion_runs/            Per-run status, schema version, counts, and errors
+  reports/
+    task4_data_products_report.html
+                               Standalone browser visualization of Task 4 products
 ```
 
 ## Schema-Version Semantics
@@ -144,6 +159,12 @@ global version. Normal tables retain their source versions; integrated tables
 use source-specific version columns; aggregate tables collect distinct version
 sets; and benchmark results store a JSON version snapshot. Raw tables and
 ingestion metadata remain the authoritative lineage sources.
+
+Task 4 products are independently refreshed from a pinned Integrated Delta
+version. Product rows retain their own schema version, the source Delta version,
+the source schema-version snapshot, and creation/refresh timestamps. The product
+catalog additionally records users, grain, materialization rationale, row count,
+active Delta storage, refresh duration, and partition strategy.
 
 Source column names and Parquet physical types are validated against the active
 schema contract during consumption. CSV values are converted using declared

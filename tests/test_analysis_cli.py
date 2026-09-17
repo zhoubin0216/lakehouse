@@ -1,6 +1,7 @@
 import pytest
 
-from src.data_analysis import analytical_queries
+from src.data_analysis import analytical_queries, data_products
+from src.data_analysis.data_product_report import render_report
 from src.data_analysis.query_library import QUERY_NAMES, SQL_DIRECTORY, ANALYTICAL_QUERIES
 import src.pipeline as pipeline
 
@@ -27,3 +28,19 @@ def test_sql_registry_has_all_six_files():
     assert len(QUERY_NAMES) == 6
     assert set(QUERY_NAMES) == {path.stem for path in SQL_DIRECTORY.glob("*.sql")}
     assert all(sql.strip() for sql in ANALYTICAL_QUERIES.values())
+
+
+def test_product_listing_does_not_start_spark(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["data_products", "--list"])
+
+    def unexpected_call(*args):
+        pytest.fail("Listing product names should not need Spark or a config")
+
+    monkeypatch.setattr(data_products, "create_spark", unexpected_call)
+    monkeypatch.setattr(data_products, "load_config", unexpected_call)
+    data_products.main()
+    assert capsys.readouterr().out.splitlines() == list(data_products.PRODUCT_BUILDERS)
+
+
+def test_report_renderer_is_importable_without_starting_spark():
+    assert callable(render_report)

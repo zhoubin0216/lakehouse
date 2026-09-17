@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Urban Mobility Data Products</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: light-dark(#f3f6f8, #11171c);
+      --surface: light-dark(#ffffff, #1a2229);
+      --surface-alt: light-dark(#e9eff2, #222d35);
+      --text: light-dark(#17242d, #edf3f6);
+      --muted: light-dark(#62727d, #aab8c1);
+      --border: light-dark(#d5dee3, #34434d);
+      --navy: light-dark(#183f5b, #78b6db);
+      --teal: light-dark(#148a88, #4fc1bc);
+      --amber: light-dark(#c27713, #efb14d);
+      --coral: light-dark(#bf5d4d, #ec8a79);
+      --green: light-dark(#3d7d58, #78ba8d);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+    main { max-width: 1380px; margin: 0 auto; padding: 28px; }
+    header {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 24px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1, h2, p { margin: 0; }
+    h1 { font-size: 32px; font-weight: 650; }
+    h2 { font-size: 17px; font-weight: 650; }
+    .subtitle { color: var(--muted); margin-top: 5px; }
+    .period { color: var(--muted); text-align: right; font-size: 14px; }
+    .kpis {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 18px 0 22px;
+    }
+    .kpi {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 16px;
+      min-width: 0;
+    }
+    .kpi-label, .chart-note, footer { color: var(--muted); font-size: 13px; }
+    .kpi-value { font-size: 25px; font-weight: 650; margin: 7px 0 3px; font-variant-numeric: tabular-nums; }
+    .kpi-context { color: var(--muted); font-size: 12px; }
+    .charts { display: grid; grid-template-columns: 1.25fr 1fr; gap: 18px; }
+    .chart {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      padding: 18px;
+      min-width: 0;
+    }
+    .chart-head { display: flex; justify-content: space-between; gap: 14px; align-items: baseline; margin-bottom: 12px; }
+    svg { display: block; width: 100%; overflow: visible; }
+    .axis { fill: var(--muted); font-size: 11px; }
+    .grid { stroke: var(--border); stroke-width: 1; }
+    .line { fill: none; stroke: var(--teal); stroke-width: 2.5; }
+    .area { fill: var(--teal); opacity: 0.12; }
+    .bar-zone { fill: var(--navy); }
+    .bar-weather { fill: var(--amber); }
+    .bar-air-good { fill: var(--green); }
+    .bar-air-other { fill: var(--coral); }
+    .value-label { fill: var(--text); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .category-label { fill: var(--text); font-size: 11px; }
+    footer { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--border); }
+    code { color: var(--text); }
+    @media (max-width: 900px) {
+      .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .charts { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      main { padding: 16px; }
+      header { display: block; }
+      .period { text-align: left; margin-top: 8px; }
+      .kpis { grid-template-columns: 1fr; }
+      .chart { padding: 14px; }
+      .chart-head { display: block; }
+      .chart-note { margin-top: 3px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Urban Mobility Data Products</h1>
+        <p class="subtitle">NYC Yellow Taxi</p>
+      </div>
+      <p class="period" id="period"></p>
+    </header>
+
+    <section class="kpis" aria-label="Key metrics">
+      <article class="kpi"><div class="kpi-label">Total trips</div><div class="kpi-value" id="total-trips"></div><div class="kpi-context">Integrated trip records</div></article>
+      <article class="kpi"><div class="kpi-label">Average daily demand</div><div class="kpi-value" id="average-daily"></div><div class="kpi-context">Trips per day</div></article>
+      <article class="kpi"><div class="kpi-label">Total recorded revenue</div><div class="kpi-value" id="total-revenue"></div><div class="kpi-context">Sum of total_amount</div></article>
+      <article class="kpi"><div class="kpi-label">Busiest day</div><div class="kpi-value" id="busiest-date"></div><div class="kpi-context" id="busiest-context"></div></article>
+    </section>
+
+    <section class="charts" aria-label="Data product charts">
+      <article class="chart">
+        <div class="chart-head"><h2>Daily taxi demand</h2><span class="chart-note">Trips per day</span></div>
+        <svg id="daily-chart" role="img" aria-label="Daily taxi demand over the reporting period"></svg>
+      </article>
+      <article class="chart">
+        <div class="chart-head"><h2>Highest-demand pickup zones</h2><span class="chart-note">Top 10 by trips</span></div>
+        <svg id="zone-chart" role="img" aria-label="Ten pickup zones with the highest trip demand"></svg>
+      </article>
+      <article class="chart">
+        <div class="chart-head"><h2>Demand by weather condition</h2><span class="chart-note">Meteostat condition names</span></div>
+        <svg id="weather-chart" role="img" aria-label="Taxi trips grouped by named weather condition"></svg>
+      </article>
+      <article class="chart">
+        <div class="chart-head"><h2>Demand by PM2.5 category</h2><span class="chart-note">Trip share and average distance</span></div>
+        <svg id="air-chart" role="img" aria-label="Taxi trip share by air quality category"></svg>
+      </article>
+    </section>
+
+    <footer>
+      Generated from the four Task 4 Delta products. Weather names follow the Meteostat <code>coco</code> condition-code definition.
+    </footer>
+  </main>
+
+  <script id="report-data" type="application/json">{"title":"Urban Mobility Data Products","subtitle":"NYC Yellow Taxi","period":{"start":"2024-01-01","end":"2024-03-31"},"generated_at":"2026-09-17T10:13:25+00:00","kpis":{"total_trips":9551387,"average_daily_trips":104960.2967032967,"total_revenue":256580761.72000045,"busiest_date":"2024-03-09","busiest_day_trips":140451,"busiest_day_peak_hour":19},"daily":[{"date":"2024-01-01","trips":80983,"revenue":2442028.220000013,"peak_hour":1},{"date":"2024-01-02","trips":75497,"revenue":2280611.380000012,"peak_hour":17},{"date":"2024-01-03","trips":82400,"revenue":2357162.05000001,"peak_hour":18},{"date":"2024-01-04","trips":102876,"revenue":2799606.1900000023,"peak_hour":18},{"date":"2024-01-05","trips":103144,"revenue":2727887.460000006,"peak_hour":18},{"date":"2024-01-06","trips":97087,"revenue":2435377.8600000124,"peak_hour":16},{"date":"2024-01-07","trips":67528,"revenue":1897251.7900000117,"peak_hour":16},{"date":"2024-01-08","trips":80009,"revenue":2215917.920000011,"peak_hour":18},{"date":"2024-01-09","trips":93940,"revenue":2363257.120000013,"peak_hour":18},{"date":"2024-01-10","trips":94970,"revenue":2549377.550000012,"peak_hour":18},{"date":"2024-01-11","trips":104988,"revenue":2904598.050000007,"peak_hour":18},{"date":"2024-01-12","trips":103628,"revenue":2861864.899999999,"peak_hour":18},{"date":"2024-01-13","trips":104726,"revenue":2649289.4500000104,"peak_hour":18},{"date":"2024-01-14","trips":94393,"revenue":2456943.740000015,"peak_hour":16},{"date":"2024-01-15","trips":77005,"revenue":2163726.340000009,"peak_hour":14},{"date":"2024-01-16","trips":93029,"revenue":2634331.940000008,"peak_hour":18},{"date":"2024-01-17","trips":110340,"revenue":2979339.1699999976,"peak_hour":18},{"date":"2024-01-18","trips":110321,"revenue":2942411.2600000035,"peak_hour":18},{"date":"2024-01-19","trips":95925,"revenue":2479243.020000016,"peak_hour":18},{"date":"2024-01-20","trips":108735,"revenue":2600832.720000012,"peak_hour":19},{"date":"2024-01-21","trips":84471,"revenue":2264594.60000001,"peak_hour":14},{"date":"2024-01-22","trips":85623,"revenue":2358925.5100000105,"peak_hour":17},{"date":"2024-01-23","trips":99858,"revenue":2635564.920000008,"peak_hour":18},{"date":"2024-01-24","trips":105088,"revenue":2788112.6800000044,"peak_hour":18},{"date":"2024-01-25","trips":110294,"revenue":3002392.0999999894,"peak_hour":18},{"date":"2024-01-26","trips":105774,"revenue":2811631.979999992,"peak_hour":18},{"date":"2024-01-27","trips":110473,"revenue":2711515.0900000054,"peak_hour":22},{"date":"2024-01-28","trips":92801,"revenue":2433853.5000000135,"peak_hour":13},{"date":"2024-01-29","trips":84523,"revenue":2337915.2000000146,"peak_hour":18},{"date":"2024-01-30","trips":101196,"revenue":2640277.8800000125,"peak_hour":18},{"date":"2024-01-31","trips":102106,"revenue":2685664.4299999974,"peak_hour":18},{"date":"2024-02-01","trips":109963,"revenue":2975572.0699999942,"peak_hour":18},{"date":"2024-02-02","trips":105435,"revenue":2762343.6600000015,"peak_hour":18},{"date":"2024-02-03","trips":110580,"revenue":2666656.1300000073,"peak_hour":23},{"date":"2024-02-04","trips":88052,"revenue":2374828.3000000156,"peak_hour":0},{"date":"2024-02-05","trips":88400,"revenue":2414529.960000016,"peak_hour":18},{"date":"2024-02-06","trips":102113,"revenue":2703081.9000000004,"peak_hour":18},{"date":"2024-02-07","trips":102933,"revenue":2827787.270000007,"peak_hour":18},{"date":"2024-02-08","trips":114027,"revenue":3131435.5399999823,"peak_hour":18},{"date":"2024-02-09","trips":110479,"revenue":2984754.2699999954,"peak_hour":18},{"date":"2024-02-10","trips":111629,"revenue":2770130.7400000016,"peak_hour":18},{"date":"2024-02-11","trips":96541,"revenue":2576300.4600000083,"peak_hour":17},{"date":"2024-02-12","trips":92063,"revenue":2524019.8800000153,"peak_hour":18},{"date":"2024-02-13","trips":69058,"revenue":1709680.4300000123,"peak_hour":18},{"date":"2024-02-14","trips":121741,"revenue":3180806.7299999804,"peak_hour":18},{"date":"2024-02-15","trips":122924,"revenue":3252404.2199999923,"peak_hour":18},{"date":"2024-02-16","trips":105811,"revenue":2898823.099999997,"peak_hour":18},{"date":"2024-02-17","trips":105789,"revenue":2589422.04000001,"peak_hour":23},{"date":"2024-02-18","trips":93763,"revenue":2438607.8700000127,"peak_hour":0},{"date":"2024-02-19","trips":76038,"revenue":2194274.530000009,"peak_hour":16},{"date":"2024-02-20","trips":97059,"revenue":2673445.520000002,"peak_hour":18},{"date":"2024-02-21","trips":103514,"revenue":2753094.549999994,"peak_hour":18},{"date":"2024-02-22","trips":115578,"revenue":3144550.269999984,"peak_hour":18},{"date":"2024-02-23","trips":102418,"revenue":2758808.7200000063,"peak_hour":18},{"date":"2024-02-24","trips":117791,"revenue":2907907.81,"peak_hour":23},{"date":"2024-02-25","trips":95799,"revenue":2590596.4700000137,"peak_hour":0},{"date":"2024-02-26","trips":86299,"revenue":2531526.8600000152,"peak_hour":18},{"date":"2024-02-27","trips":118593,"revenue":3117764.219999992,"peak_hour":19},{"date":"2024-02-28","trips":112443,"revenue":3062475.9799999925,"peak_hour":18},{"date":"2024-02-29","trips":129884,"revenue":3537753.8099999866,"peak_hour":18},{"date":"2024-03-01","trips":117613,"revenue":3141436.460000001,"peak_hour":18},{"date":"2024-03-02","trips":122427,"revenue":3036337.2500000116,"peak_hour":17},{"date":"2024-03-03","trips":96969,"revenue":2693590.200000008,"peak_hour":17},{"date":"2024-03-04","trips":94161,"revenue":2649686.3000000184,"peak_hour":18},{"date":"2024-03-05","trips":112532,"revenue":3029923.0200000065,"peak_hour":18},{"date":"2024-03-06","trips":132837,"revenue":3546898.0199999935,"peak_hour":18},{"date":"2024-03-07","trips":122073,"revenue":3343709.930000002,"peak_hour":18},{"date":"2024-03-08","trips":119502,"revenue":3233614.960000001,"peak_hour":18},{"date":"2024-03-09","trips":140451,"revenue":3425771.5099999984,"peak_hour":19},{"date":"2024-03-10","trips":104458,"revenue":2860938.960000011,"peak_hour":14},{"date":"2024-03-11","trips":98294,"revenue":2771096.0700000166,"peak_hour":18},{"date":"2024-03-12","trips":112174,"revenue":3124668.400000004,"peak_hour":18},{"date":"2024-03-13","trips":119678,"revenue":3312267.8600000027,"peak_hour":18},{"date":"2024-03-14","trips":137002,"revenue":3830257.0999999787,"peak_hour":18},{"date":"2024-03-15","trips":128772,"revenue":3507101.0800000033,"peak_hour":18},{"date":"2024-03-16","trips":131382,"revenue":3391990.0800000103,"peak_hour":22},{"date":"2024-03-17","trips":103383,"revenue":2977347.140000011,"peak_hour":0},{"date":"2024-03-18","trips":94954,"revenue":2762085.090000017,"peak_hour":17},{"date":"2024-03-19","trips":111668,"revenue":3053359.1900000093,"peak_hour":21},{"date":"2024-03-20","trips":118976,"revenue":3251096.37000001,"peak_hour":17},{"date":"2024-03-21","trips":130750,"revenue":3572589.210000002,"peak_hour":21},{"date":"2024-03-22","trips":116815,"revenue":3196690.200000009,"peak_hour":19},{"date":"2024-03-23","trips":121935,"revenue":3017218.120000009,"peak_hour":23},{"date":"2024-03-24","trips":101884,"revenue":2882650.730000012,"peak_hour":0},{"date":"2024-03-25","trips":93410,"revenue":2684458.140000014,"peak_hour":18},{"date":"2024-03-26","trips":112671,"revenue":3070936.620000009,"peak_hour":21},{"date":"2024-03-27","trips":121137,"revenue":3327851.7099999967,"peak_hour":18},{"date":"2024-03-28","trips":132669,"revenue":3718837.1099999878,"peak_hour":19},{"date":"2024-03-29","trips":119809,"revenue":3198955.450000009,"peak_hour":19},{"date":"2024-03-30","trips":112625,"revenue":2824750.8300000136,"peak_hour":20},{"date":"2024-03-31","trips":97928,"revenue":2677759.280000011,"peak_hour":0}],"zones":[{"zone":"Midtown Center","borough":"Manhattan","trips":453746},{"zone":"Upper East Side South","borough":"Manhattan","trips":439068},{"zone":"JFK Airport","borough":"Queens","trips":429572},{"zone":"Upper East Side North","borough":"Manhattan","trips":416427},{"zone":"Midtown East","borough":"Manhattan","trips":336391},{"zone":"Times Sq/Theatre District","borough":"Manhattan","trips":331464},{"zone":"Penn Station/Madison Sq West","borough":"Manhattan","trips":319631},{"zone":"Lincoln Square East","borough":"Manhattan","trips":316240},{"zone":"LaGuardia Airport","borough":"Queens","trips":284279},{"zone":"Upper West Side South","borough":"Manhattan","trips":281671}],"weather":[{"code":2,"condition":"Fair","trips":3069329},{"code":3,"condition":"Cloudy","trips":2246159},{"code":4,"condition":"Overcast","trips":2153141},{"code":7,"condition":"Light Rain","trips":721276},{"code":9,"condition":"Heavy Rain","trips":325849},{"code":5,"condition":"Fog","trips":267080},{"code":8,"condition":"Rain","trips":243228},{"code":1,"condition":"Clear","trips":238870},{"code":14,"condition":"Light Snowfall","trips":181873},{"code":15,"condition":"Snowfall","trips":32493},{"code":16,"condition":"Heavy Snowfall","trips":21438},{"code":12,"condition":"Sleet","trips":20477},{"code":13,"condition":"Heavy Sleet","trips":17222},{"code":10,"condition":"Freezing Rain","trips":12952}],"air_quality":[{"category":"good","trips":7142481,"avg_distance":3.250207717551053},{"category":"moderate","trips":2408906,"avg_distance":3.1454268564837498}]}</script>
+  <script>
+    (() => {
+      const data = JSON.parse(document.getElementById("report-data").textContent);
+      const number = new Intl.NumberFormat("en-US");
+      const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+      const money = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
+      const shortDate = value => new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit" }).format(new Date(value + "T00:00:00"));
+      const fullDate = value => new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "2-digit" }).format(new Date(value + "T00:00:00"));
+      const el = id => document.getElementById(id);
+      const ns = "http://www.w3.org/2000/svg";
+
+      el("period").textContent = `${fullDate(data.period.start)} to ${fullDate(data.period.end)}`;
+      el("total-trips").textContent = compact.format(data.kpis.total_trips);
+      el("average-daily").textContent = number.format(Math.round(data.kpis.average_daily_trips));
+      el("total-revenue").textContent = money.format(data.kpis.total_revenue);
+      el("busiest-date").textContent = shortDate(data.kpis.busiest_date);
+      const peak = data.kpis.busiest_day_peak_hour;
+      el("busiest-context").textContent = `${number.format(data.kpis.busiest_day_trips)} trips${peak === null ? "" : `; peak hour ${String(peak).padStart(2, "0")}:00`}`;
+
+      function node(name, attrs = {}, text = null) {
+        const item = document.createElementNS(ns, name);
+        Object.entries(attrs).forEach(([key, value]) => item.setAttribute(key, value));
+        if (text !== null) item.textContent = text;
+        return item;
+      }
+
+      function setup(id, height) {
+        const svg = el(id);
+        const width = Math.max(240, svg.parentElement.clientWidth - 36);
+        svg.replaceChildren();
+        svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        svg.setAttribute("height", height);
+        return { svg, width, height };
+      }
+
+      function addTitle(mark, text) { mark.appendChild(node("title", {}, text)); }
+
+      function drawDaily() {
+        const { svg, width, height } = setup("daily-chart", 285);
+        const m = { top: 16, right: 16, bottom: 38, left: 58 };
+        const plotW = width - m.left - m.right;
+        const plotH = height - m.top - m.bottom;
+        const values = data.daily.map(d => d.trips);
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        const pad = Math.max(1, (max - min) * 0.12);
+        const yMin = Math.max(0, min - pad);
+        const yMax = max + pad;
+        const x = i => m.left + (data.daily.length === 1 ? plotW / 2 : i * plotW / (data.daily.length - 1));
+        const y = value => m.top + (yMax - value) * plotH / (yMax - yMin || 1);
+
+        for (let i = 0; i <= 4; i += 1) {
+          const value = yMin + (yMax - yMin) * i / 4;
+          const py = y(value);
+          svg.appendChild(node("line", { x1: m.left, x2: width - m.right, y1: py, y2: py, class: "grid" }));
+          svg.appendChild(node("text", { x: m.left - 8, y: py + 4, "text-anchor": "end", class: "axis" }, compact.format(value)));
+        }
+        const tickIndexes = [...new Set([0, Math.round((data.daily.length - 1) / 3), Math.round(2 * (data.daily.length - 1) / 3), data.daily.length - 1])];
+        tickIndexes.forEach((index, position) => {
+          svg.appendChild(node("text", { x: x(index), y: height - 10, "text-anchor": position === 0 ? "start" : position === tickIndexes.length - 1 ? "end" : "middle", class: "axis" }, shortDate(data.daily[index].date)));
+        });
+        const linePoints = data.daily.map((d, i) => `${x(i)},${y(d.trips)}`).join(" ");
+        const areaPoints = `${m.left},${m.top + plotH} ${linePoints} ${width - m.right},${m.top + plotH}`;
+        svg.appendChild(node("polygon", { points: areaPoints, class: "area" }));
+        svg.appendChild(node("polyline", { points: linePoints, class: "line" }));
+        data.daily.forEach((d, i) => {
+          const hit = node("circle", { cx: x(i), cy: y(d.trips), r: 6, fill: "transparent" });
+          addTitle(hit, `${fullDate(d.date)}: ${number.format(d.trips)} trips`);
+          svg.appendChild(hit);
+        });
+      }
+
+      function drawHorizontalBars(id, rows, labelKey, barClass, height, tooltip) {
+        const { svg, width } = setup(id, height);
+        const labelW = Math.min(170, Math.max(116, width * 0.34));
+        const m = { top: 8, right: 56, bottom: 24, left: labelW };
+        const plotW = width - m.left - m.right;
+        const rowH = (height - m.top - m.bottom) / Math.max(rows.length, 1);
+        const max = Math.max(...rows.map(d => d.trips), 1);
+        rows.forEach((d, i) => {
+          const y = m.top + i * rowH + rowH * 0.18;
+          const barH = rowH * 0.64;
+          const barW = d.trips / max * plotW;
+          const fullLabel = d[labelKey];
+          const maxChars = Math.max(12, Math.floor(labelW / 7));
+          const visibleLabel = fullLabel.length > maxChars ? `${fullLabel.slice(0, maxChars - 3)}...` : fullLabel;
+          svg.appendChild(node("text", { x: m.left - 8, y: y + barH * 0.68, "text-anchor": "end", class: "category-label" }, visibleLabel));
+          const bar = node("rect", { x: m.left, y, width: barW, height: barH, class: barClass });
+          addTitle(bar, tooltip(d));
+          svg.appendChild(bar);
+          svg.appendChild(node("text", { x: m.left + barW + 6, y: y + barH * 0.68, class: "value-label" }, compact.format(d.trips)));
+        });
+      }
+
+      function drawAir() {
+        const chartHeight = Math.max(285, 170 + data.air_quality.length * 43);
+        const { svg, width, height } = setup("air-chart", chartHeight);
+        const total = data.air_quality.reduce((sum, d) => sum + d.trips, 0);
+        const m = { top: 46, right: 20, bottom: 28, left: 20 };
+        const plotW = width - m.left - m.right;
+        let cursor = m.left;
+        data.air_quality.forEach((d, index) => {
+          const w = plotW * d.trips / total;
+          const rect = node("rect", { x: cursor, y: m.top, width: w, height: 72, class: index === 0 ? "bar-air-good" : "bar-air-other" });
+          addTitle(rect, `${d.category}: ${number.format(d.trips)} trips; ${d.avg_distance.toFixed(2)} mi average distance`);
+          svg.appendChild(rect);
+          if (w > 68) {
+            svg.appendChild(node("text", { x: cursor + w / 2, y: m.top + 31, "text-anchor": "middle", class: "value-label" }, d.category.replaceAll("_", " ")));
+            svg.appendChild(node("text", { x: cursor + w / 2, y: m.top + 51, "text-anchor": "middle", class: "value-label" }, `${(100 * d.trips / total).toFixed(1)}%`));
+          }
+          cursor += w;
+        });
+        data.air_quality.forEach((d, i) => {
+          const y = 158 + i * 43;
+          svg.appendChild(node("circle", { cx: m.left + 6, cy: y - 4, r: 6, class: i === 0 ? "bar-air-good" : "bar-air-other" }));
+          svg.appendChild(node("text", { x: m.left + 22, y, class: "category-label" }, `${d.category.replaceAll("_", " ")}: ${compact.format(d.trips)} trips`));
+          svg.appendChild(node("text", { x: width - m.right, y, "text-anchor": "end", class: "value-label" }, `${d.avg_distance.toFixed(2)} mi avg distance`));
+        });
+      }
+
+      function drawAll() {
+        drawDaily();
+        drawHorizontalBars("zone-chart", data.zones, "zone", "bar-zone", 285, d => `${d.zone}, ${d.borough}: ${number.format(d.trips)} trips`);
+        drawHorizontalBars("weather-chart", data.weather, "condition", "bar-weather", Math.max(285, data.weather.length * 34 + 32), d => `${d.condition} (code ${d.code}): ${number.format(d.trips)} trips`);
+        drawAir();
+      }
+
+      drawAll();
+      let resizeTimer;
+      window.addEventListener("resize", () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(drawAll, 100);
+      });
+    })();
+  </script>
+</body>
+</html>

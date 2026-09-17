@@ -25,6 +25,12 @@ SUPPORTED_SOURCE_TYPES = {
     "timestamp",
     "timestamp_ntz",
 }
+REQUIRED_DATA_PRODUCTS = {
+    "daily_mobility_summary",
+    "taxi_zone_statistics",
+    "weather_impact_summary",
+    "air_quality_impact_summary",
+}
 T = TypeVar("T")
 
 
@@ -69,6 +75,57 @@ def validate_config(config: dict) -> None:
             validate_schema_definition(dataset_name, version_key, schema_definition)
 
         resolve_schema_definition(dataset_name, dataset_config)
+
+    validate_data_products_config(config)
+
+
+def validate_data_products_config(config: dict) -> None:
+    """Validate Task 4 analytical product contracts when configured."""
+    analysis = config.get("data_analysis")
+    if analysis is None:
+        return
+    if not isinstance(analysis, dict):
+        raise ValueError("data_analysis must be a YAML mapping")
+    products = analysis.get("products")
+    if products is None:
+        return
+    if not isinstance(products, dict) or not products.get("catalog_table"):
+        raise ValueError("data_analysis.products must define catalog_table")
+    definitions = products.get("definitions")
+    if not isinstance(definitions, dict):
+        raise ValueError("data_analysis.products must define product definitions")
+    missing = sorted(REQUIRED_DATA_PRODUCTS - set(definitions))
+    if missing:
+        raise ValueError(f"Missing required analytical products: {missing}")
+
+    required_fields = {
+        "table",
+        "schema_version",
+        "partitions",
+        "grain",
+        "intended_users",
+        "description",
+        "materialization_reason",
+    }
+    for product_name, definition in definitions.items():
+        if not isinstance(definition, dict):
+            raise ValueError(f"Product '{product_name}' definition must be a YAML mapping")
+        missing_fields = sorted(required_fields - set(definition))
+        if missing_fields:
+            raise ValueError(f"Product '{product_name}' is missing fields: {missing_fields}")
+        version = definition["schema_version"]
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValueError(f"Product '{product_name}' schema_version must be a positive integer")
+        if not isinstance(definition["partitions"], list):
+            raise ValueError(f"Product '{product_name}' partitions must be a list")
+
+    report = analysis.get("report")
+    if report is not None:
+        if not isinstance(report, dict):
+            raise ValueError("data_analysis.report must be a YAML mapping")
+        output_file = report.get("output_file")
+        if not isinstance(output_file, str) or not output_file.strip():
+            raise ValueError("data_analysis.report must define output_file")
 
 
 def validate_schema_definition(dataset_name: str, version_key: str, schema_definition: dict) -> None:

@@ -10,6 +10,20 @@ def test_config_loads() -> None:
     assert "yellow_taxi_trips" in config["datasets"]
     assert all(dataset["current_schema_version"] == 1 for dataset in config["datasets"].values())
     assert all("1" in dataset["schema_versions"] for dataset in config["datasets"].values())
+    assert len(config["data_analysis"]["products"]["definitions"]) == 4
+
+
+def test_config_rejects_missing_required_analytical_product() -> None:
+    config = load_config()
+    del config["data_analysis"]["products"]["definitions"]["daily_mobility_summary"]
+
+    with pytest.raises(ValueError, match="Missing required analytical products"):
+        validate_config(config)
+
+
+def test_config_defines_standalone_report_output() -> None:
+    config = load_config()
+    assert config["data_analysis"]["report"]["output_file"].endswith(".html")
 
 
 @pytest.mark.parametrize("schema_version", [None, 0, -1, True, "1"])
