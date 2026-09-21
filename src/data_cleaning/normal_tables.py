@@ -7,7 +7,7 @@ from src.data_quality import classify_records, write_rejected_records
 
 
 def latest_schema_records(df: DataFrame, key_columns: list[str]) -> DataFrame:
-    """Keep the newest schema/ingestion version for each raw business key."""
+    """Keep the latest arrival; schema version is a contract, not revision time."""
     lineage_columns = ["_schema_version", "_ingestion_timestamp"]
     missing_columns = [
         column
@@ -18,8 +18,8 @@ def latest_schema_records(df: DataFrame, key_columns: list[str]) -> DataFrame:
         raise ValueError(f"Raw input is missing version lineage columns: {missing_columns}")
 
     window = Window.partitionBy(*key_columns).orderBy(
-        F.col("_schema_version").desc(),
         F.col("_ingestion_timestamp").desc_nulls_last(),
+        F.col("_schema_version").desc(),
     )
     return (
         df.withColumn("_schema_rank", F.row_number().over(window))
@@ -143,6 +143,7 @@ def clean_weather_with_rejections(
         F.col("pres").cast("double").alias("pressure_hpa"),
         F.col("cldc").cast("double").alias("cloud_cover_pct"),
         F.col("coco").cast("integer").alias("weather_condition_code"),
+        optional_double(df, "humidity").alias("humidity"),
         F.col("_schema_version").alias("source_schema_version"),
     )
 
@@ -166,6 +167,7 @@ def clean_weather_with_rejections(
             ("day is required", F.col("day").isNull()),
             ("hour is required", F.col("hour").isNull()),
             ("invalid event timestamp", F.col("event_timestamp").isNull()),
+            ("humidity must be between 0 and 100", F.col("humidity").isNotNull() & ~F.col("humidity").between(0, 100)),
         ],
     )
 
@@ -228,6 +230,7 @@ def clean_weather_with_rejections(
         "cloud_cover_pct",
         "weather_condition_code",
         "source_schema_version",
+        "humidity",
     )
     return result, rejected
 
@@ -243,6 +246,7 @@ def clean_air_quality_with_rejections(
     """Create one city-level PM2.5 observation per hour."""
     nyc_counties = ["Bronx", "Kings", "Queens"]
     expected_unit = "Micrograms/cubic meter (LC)"
+    df = normalize_air_times(df)
 
     selected = (
         latest_schema_records(
@@ -271,6 +275,7 @@ def clean_air_quality_with_rejections(
             .alias("pm25_ug_m3"),
             "units_of_measure",
             "_schema_version",
+            optional_double(df, "aqi").alias("aqi"),
         )
         .withColumn(
             "event_timestamp",
@@ -297,6 +302,7 @@ def clean_air_quality_with_rejections(
             ("invalid local date or time", F.col("event_timestamp").isNull()),
             ("sample measurement is required", F.col("pm25_ug_m3").isNull()),
             ("sample measurement must be non-negative", F.col("pm25_ug_m3") < 0),
+            ("aqi must be between 0 and 500", F.col("aqi").isNotNull() & ~F.col("aqi").between(0, 500)),
             (
                 "unexpected unit of measure",
                 F.col("units_of_measure").isNull()
@@ -313,6 +319,7 @@ def clean_air_quality_with_rejections(
             F.avg("pm25_ug_m3").alias("pm25_avg_ug_m3"),
             F.min("pm25_ug_m3").alias("pm25_min_ug_m3"),
             F.max("pm25_ug_m3").alias("pm25_max_ug_m3"),
+            F.max("aqi").alias("aqi"),
             F.count("*").alias("air_quality_observation_count"),
             F.countDistinct(
                 "county_code",
@@ -348,6 +355,7 @@ def clean_air_quality_with_rejections(
         "pm25_avg_ug_m3",
         "pm25_min_ug_m3",
         "pm25_max_ug_m3",
+        "aqi",
         "air_quality_observation_count",
         "air_quality_site_count",
         "source_schema_versions",
@@ -371,8 +379,7 @@ def clean_taxi_trips_with_rejections(
 ) -> tuple[DataFrame, DataFrame]:
     """Clean taxi trips and derive fields needed for integration."""
     rules = dataset_config["quality_rules"]
-    pickup_start = rules["pickup_start"]
-    pickup_end = rules["pickup_end_exclusive"]
+    in_period = pickup_period_condition("pickup_timestamp", rules)
     max_duration = rules["max_trip_duration_seconds"]
     max_distance = rules["max_trip_distance"]
     duration_seconds = F.expr(
@@ -421,10 +428,7 @@ def clean_taxi_trips_with_rejections(
             (
                 "pickup timestamp is outside the configured period",
                 pickup_present
-                & (
-                    (F.col("pickup_timestamp") < F.lit(pickup_start).cast("timestamp_ntz"))
-                    | (F.col("pickup_timestamp") >= F.lit(pickup_end).cast("timestamp_ntz"))
-                ),
+                & ~in_period,
             ),
             (
                 "trip duration could not be calculated",
@@ -496,6 +500,33 @@ def clean_taxi_trips_with_rejections(
         )
     )
     return cleaned, rejected
+
+
+def optional_double(df: DataFrame, name: str):
+    return F.col(name).cast("double") if name in df.columns else F.lit(None).cast("double")
+
+
+def normalize_air_times(df: DataFrame) -> DataFrame:
+    """Use one key representation for CSV durations and HH:mm[:ss] strings."""
+    for column, date_column in [("time_local", "date_local"), ("time_gmt", "date_gmt")]:
+        if column in df.columns and date_column in df.columns:
+            value = F.regexp_extract(F.col(column), r"(\d{1,2}:\d{2}(?::\d{2})?)$", 1)
+            parsed = F.to_timestamp_ntz(F.concat_ws(" ", F.col(date_column).cast("string"), value))
+            # Casting NTZ to text preserves wall time; date_format implicitly
+            # converts to a zoned timestamp and shifts nonexistent DST hours.
+            df = df.withColumn(column, F.coalesce(
+                F.substring(parsed.cast("string"), 12, 8), F.col(column).cast("string")))
+    return df
+
+
+def pickup_period_condition(column: str, rules: dict):
+    periods = [(rules["pickup_start"], rules["pickup_end_exclusive"])]
+    periods.extend(rules.get("additional_pickup_periods", []))
+    condition = F.lit(False)
+    for start, end in periods:
+        condition = condition | ((F.col(column) >= F.lit(start).cast("timestamp_ntz"))
+                                 & (F.col(column) < F.lit(end).cast("timestamp_ntz")))
+    return condition
 
 
 def build_normal_tables(spark: SparkSession, config: dict) -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+from pathlib import Path
 
 from src.common import create_spark, load_config
 from src.data_aggregation.aggregate_tables import build_aggregate_tables
@@ -13,6 +15,8 @@ def run_incremental_pipeline(spark, config: dict) -> dict:
     ingestion = build_raw_tables(spark, config)
     if not ingestion["has_new_data"]:
         print("No new accepted raw records; skipping normal, integrated, and aggregate steps")
+        if "incremental" in config:
+            run_updates(spark, config)
         return ingestion
 
     print(
@@ -22,7 +26,24 @@ def run_incremental_pipeline(spark, config: dict) -> dict:
     build_normal_tables(spark, config)
     build_integrated_tables(spark, config)
     build_aggregate_tables(spark, config)
+    if "incremental" in config:
+        run_updates(spark, config)
     return ingestion
+
+
+def run_updates(spark, config, manifest=None):
+    from src.incremental.pipeline import apply_release
+    manifests = [Path(manifest)] if manifest else sorted(
+        Path(config["incremental"]["releases_root"]).glob("*/manifest.json")
+    )
+    if manifest is None:
+        pending = {
+            Path(state["manifest"]).resolve()
+            for path in Path(config["incremental"]["state_root"]).glob("*/state.json")
+            if (state := json.loads(path.read_text()))["status"] != "complete"
+        }
+        manifests.sort(key=lambda path: path.resolve() not in pending)
+    return [apply_release(spark, config, path) for path in manifests]
 
 
 def run_pipeline_step(spark, config: dict, step: str):
@@ -46,14 +67,20 @@ def main() -> None:
     )
     parser.add_argument(
         "step",
-        choices=["raw", "normal", "integrated", "aggregate", "all"],
+        choices=["raw", "normal", "integrated", "aggregate", "all", "updates"],
     )
+    parser.add_argument("--manifest", type=Path, help="Immutable release manifest (updates only)")
     args = parser.parse_args()
+    if args.manifest and args.step != "updates":
+        parser.error("--manifest requires the updates step")
 
     config = load_config()
     spark = create_spark()
     try:
-        run_pipeline_step(spark, config, args.step)
+        if args.step == "updates":
+            run_updates(spark, config, args.manifest)
+        else:
+            run_pipeline_step(spark, config, args.step)
     finally:
         spark.stop()
 

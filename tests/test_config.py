@@ -8,7 +8,8 @@ def test_config_loads() -> None:
     config = load_config()
     assert "datasets" in config
     assert "yellow_taxi_trips" in config["datasets"]
-    assert all(dataset["current_schema_version"] == 1 for dataset in config["datasets"].values())
+    assert config["datasets"]["weather_hourly"]["current_schema_version"] == 2
+    assert config["datasets"]["air_quality"]["current_schema_version"] == 2
     assert all("1" in dataset["schema_versions"] for dataset in config["datasets"].values())
     assert len(config["data_analysis"]["products"]["definitions"]) == 4
 

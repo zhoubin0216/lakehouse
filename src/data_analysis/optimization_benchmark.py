@@ -107,6 +107,10 @@ def prepare_inputs(spark, config):
         df = frames[view].filter(F.col("event_hour").between(
             F.lit(bounds.first_hour).cast("timestamp_ntz"),
             F.lit(bounds.last_hour).cast("timestamp_ntz")))
+        rules = config.get("datasets", {}).get("yellow_taxi_trips", {}).get("quality_rules")
+        if rules:
+            from src.data_cleaning.normal_tables import pickup_period_condition
+            df = df.filter(pickup_period_condition("event_hour", rules))
         df.createOrReplaceTempView(view)
     for manifest in manifests:
         manifest["analysis_rows"] = (bounds.trip_count if manifest["view"] == INTEGRATED_VIEW

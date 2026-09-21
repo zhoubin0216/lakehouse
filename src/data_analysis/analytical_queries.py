@@ -20,9 +20,13 @@ def register_analysis_views(spark, config):
     bounds = spark.sql("SELECT MIN(pickup_hour) AS first_hour, MAX(pickup_hour) AS last_hour "
                        "FROM integrated_taxi_trips").first()
     from pyspark.sql import functions as F
+    from src.data_cleaning.normal_tables import pickup_period_condition
     for dataset, view in (("weather_hourly", "analysis_weather"),
                           ("air_quality", "analysis_air_quality")):
         df = read_delta(spark, table_path(config, config["datasets"][dataset]["normal_table"]))
+        rules = config.get("datasets", {}).get("yellow_taxi_trips", {}).get("quality_rules")
+        if rules:
+            df = df.filter(pickup_period_condition("event_hour", rules))
         (df.filter(F.col("event_hour").between(bounds.first_hour, bounds.last_hour))
            .createOrReplaceTempView(view))
 

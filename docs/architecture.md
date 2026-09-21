@@ -1,5 +1,24 @@
 # Project Architecture
 
+## Week 3 Incremental Path
+
+```mermaid
+flowchart LR
+    Files["Update files + versioned manifest"] --> Updates["pipeline updates"]
+    Updates --> RawMerge["Deduplicate + append raw revisions"]
+    RawMerge --> NormalMerge["Clean affected keys / hours; MERGE normal"]
+    NormalMerge --> IntegratedMerge["Rejoin affected trips; MERGE integrated"]
+    IntegratedMerge --> Aggregates["Replace affected aggregate groups"]
+    IntegratedMerge --> Products["Refresh dependent products by date / month"]
+    State["Durable stage checkpoints + replay staging"] --- Updates
+    Products --> Catalog["Product catalog"]
+    Benchmark["Independent benchmark entrypoint"] -. reads .-> IntegratedMerge
+```
+
+The Week 1 manual full-build commands remain available. Week 3 updates use the
+scoped path above; analytical product maintenance runs automatically, but query
+timing/optimization benchmarks and HTML report export remain independent.
+
 ## Overall Architecture
 
 ```mermaid

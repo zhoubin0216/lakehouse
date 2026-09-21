@@ -176,8 +176,8 @@ written with their reasons to \texttt{rejected/consumption}.
 Every accepted raw row, source-file registry entry, and ingestion-run record
 stores the selected schema version. Changing the current-version pointer does
 not silently reinterpret historical rows; a backfill is an explicit operation.
-Normal tables select the highest schema version and then the latest ingestion
-for repeated business keys. One-record outputs preserve a scalar source
+Normal tables select the latest ingestion, using schema version only as a
+tie-breaker, for repeated business keys. One-record outputs preserve a scalar source
 version, while multi-source or aggregated outputs preserve source-specific
 versions or version sets. Adding twenty datasets would therefore primarily
 require catalog entries and declarative contracts, plus small transformation

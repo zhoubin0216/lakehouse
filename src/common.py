@@ -75,6 +75,11 @@ def validate_config(config: dict) -> None:
             validate_schema_definition(dataset_name, version_key, schema_definition)
 
         resolve_schema_definition(dataset_name, dataset_config)
+        source_version = dataset_config.get("source_schema_version")
+        if source_version is not None:
+            if isinstance(source_version, bool) or not isinstance(source_version, int) or source_version < 1:
+                raise ValueError(f"Dataset '{dataset_name}' source_schema_version must be a positive integer")
+            resolve_schema_definition(dataset_name, dataset_config, source_version)
 
     validate_data_products_config(config)
 
