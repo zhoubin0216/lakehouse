@@ -48,7 +48,9 @@ def consume_dataset(
     config: dict,
 ) -> dict:
     """Consume new or changed source data and return dataset-level metrics."""
-    schema_version, schema_definition = resolve_schema_definition(dataset_name, dataset_config)
+    schema_version, schema_definition = resolve_schema_definition(
+        dataset_name, dataset_config, dataset_config.get("source_schema_version")
+    )
     run = start_ingestion_run(dataset_name, schema_version)
     try:
         source_files = discover_source_files(dataset_name, dataset_config, schema_definition, config)

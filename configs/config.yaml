@@ -8,11 +8,20 @@ paths:
 data_consumption:
   sample_limit: null
   write_mode: append
+  # Bulk-loader option only; manifest-based updates always deduplicate against raw.
   deduplicate_records: false
   checksum_max_bytes: 10485760
 
 data_quality:
   rejected_table_root: rejected
+
+incremental:
+  releases_root: data/raw/updates
+  state_root: data/metadata/updates
+  new_trip_fraction: 0.06
+  duplicate_trip_fraction: 0.015
+  days: 7
+  seed: 2221
 
 data_integration:
   integrated_taxi_trips_table: integrated/integrated_taxi_trips
@@ -29,6 +38,8 @@ datasets:
     quality_rules:
       pickup_start: "2024-01-01 00:00:00"
       pickup_end_exclusive: "2024-04-01 00:00:00"
+      additional_pickup_periods:
+        - ["2025-01-01 00:00:00", "2025-01-08 00:00:00"]
       max_trip_duration_seconds: 86400
       max_trip_distance: 500.0
     ingestion_mode: incremental
@@ -127,7 +138,8 @@ datasets:
           service_zone: service_zone
 
   weather_hourly:
-    current_schema_version: 1
+    current_schema_version: 2
+    source_schema_version: 1
     ingestion_mode: incremental
     source: weather.csv
     raw_table: raw/weather_hourly
@@ -136,12 +148,12 @@ datasets:
     primary_key: [year, month, day, hour]
     partitions: []
     schema_versions:
-      "1":
+      "1": &weather_v1
         format: csv
         read_options:
           header: true
           inferSchema: false
-        column_types:
+        column_types: &weather_types
           year: int
           month: int
           day: int
@@ -192,9 +204,16 @@ datasets:
           - coco
           - coco_source
         columns: {}
+      "2":
+        <<: *weather_v1
+        column_types:
+          <<: *weather_types
+          humidity: double
+        expected_columns: [year, month, day, hour, temp, temp_source, rhum, rhum_source, prcp, prcp_source, snwd, snwd_source, wdir, wdir_source, wspd, wspd_source, wpgt, wpgt_source, pres, pres_source, cldc, cldc_source, coco, coco_source, humidity]
 
   air_quality:
-    current_schema_version: 1
+    current_schema_version: 2
+    source_schema_version: 1
     ingestion_mode: incremental
     source: hourly_88101_2024.csv
     raw_table: raw/air_quality
@@ -202,12 +221,12 @@ datasets:
     timestamp: event_timestamp
     partitions: [event_year, event_month]
     schema_versions:
-      "1":
+      "1": &air_v1
         format: csv
         read_options:
           header: true
           inferSchema: false
-        column_types:
+        column_types: &air_types
           State Code: string
           County Code: string
           Site Num: string
@@ -274,6 +293,12 @@ datasets:
           Units of Measure: units_of_measure
           State Name: state_name
           County Name: county_name
+      "2":
+        <<: *air_v1
+        column_types:
+          <<: *air_types
+          aqi: double
+        expected_columns: [State Code, County Code, Site Num, Parameter Code, POC, Latitude, Longitude, Datum, Parameter Name, Date Local, Time Local, Date GMT, Time GMT, Sample Measurement, Units of Measure, MDL, Uncertainty, Qualifier, Method Type, Method Code, Method Name, State Name, County Name, Date of Last Change, aqi]
 
 benchmark:
   unpartitioned_table: benchmark/taxi_unpartitioned

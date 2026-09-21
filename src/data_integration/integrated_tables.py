@@ -2,6 +2,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from src.common import read_delta, table_path, write_delta
+from src.data_cleaning.normal_tables import optional_double
 
 
 def prepare_pickup_zones(zones: DataFrame) -> DataFrame:
@@ -37,6 +38,7 @@ def prepare_weather(weather: DataFrame) -> DataFrame:
             F.col("event_hour").alias("pickup_hour"),
             "temperature_c",
             "relative_humidity_pct",
+            optional_double(weather, "humidity").alias("humidity"),
             "precipitation_mm",
             "snow_depth_mm",
             "wind_direction_deg",
@@ -58,6 +60,7 @@ def prepare_air_quality(air_quality: DataFrame) -> DataFrame:
             "pm25_avg_ug_m3",
             "pm25_min_ug_m3",
             "pm25_max_ug_m3",
+            optional_double(air_quality, "aqi").alias("aqi"),
             "air_quality_observation_count",
             "air_quality_site_count",
             F.col("source_schema_versions").alias("air_quality_schema_versions"),

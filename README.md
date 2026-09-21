@@ -1,8 +1,50 @@
-# Urban Data Lakehouse (Weeks 1-2)
+# Urban Data Lakehouse (Weeks 1-3)
 
 Course project for ID2221. Week 1 builds the reusable Delta Lake integration
 platform; Week 2 adds Spark SQL analytics, controlled optimization experiments,
 reusable analytical products, and a standalone HTML report.
+
+## Week 3: Incremental Updates (Tasks 1-2)
+
+After the initial raw, normal and integrated tables have been built:
+
+```bash
+python -m src.incremental.generate
+python -m src.pipeline updates --manifest data/raw/updates/week3_release2/manifest.json
+python -m src.incremental.verify
+```
+
+The generator creates one immutable update file per dataset and a manifest with
+record counts, schema versions and SHA-256 checksums. Taxi adds 6% new trips and
+1.5% duplicates, both relative to the original raw row count. Weather and air
+quality add the following week's hourly records with numeric `humidity` and
+`aqi`. The unchanged zone lookup has a header-only CSV. These are synthetic
+fixtures, not new real observations or official AQI calculations.
+
+`python -m src.pipeline updates` discovers all release manifests. Repeating the
+command resumes an interrupted release or skips completed releases without
+Delta writes. `all` also discovers releases after checking the original inputs.
+Keep the original source files immutable; deliver corrections as a new release.
+Use `updates` for regular Week 3 operation, not the manual full-build commands.
+
+The update path deduplicates against existing records, appends raw revisions,
+merges changed normal/integrated records, refreshes affected aggregate groups,
+and refreshes only dependent Week 2 products for affected dates/months.
+Benchmark execution remains separate. The HTML report is a static export;
+regenerate it with the existing report command after updating Delta products.
+
+State, pinned baseline versions, counts, errors and replay staging tables are
+stored under `data/metadata/updates/<release_id>/`. Do not delete this state or
+vacuum its baseline snapshots before an interrupted release finishes. Local
+updates use a single-writer lock; do not run manual table rebuilds concurrently.
+
+Version 1 remains defined. Original weather/air files explicitly use
+`source_schema_version: 1`; the current contract is version 2, and every update
+file declares its own version in the manifest. Old rows are not rebuilt merely
+because the schema pointer changes. New nullable fields read as null on old rows.
+
+Implementation and Task 2 design discussion: [docs/week3_tasks1_2.md](docs/week3_tasks1_2.md).
+Tasks 3-5 are outside this implementation.
 
 ## Week 1: Data Platform
 
@@ -35,6 +77,7 @@ src/data_analysis/      Week 2 query, optimization, product, and report modules
   data_products.py      Four materialized Delta products
   data_product_report.py
                         Standalone HTML report generator
+src/incremental/        Update generation, restartable releases, scoped refresh
 tests/                  Lightweight tests
 docs/report_notes.md    Notes for the final report
 docs/architecture.md    Project architecture diagrams
@@ -48,15 +91,16 @@ interrupted runs can restart without blindly re-consuming unchanged files.
 
 Each dataset declares a positive integer `current_schema_version` pointer and a
 `schema_versions` mapping in `configs/config.yaml`. The mapping preserves every
-source schema contract, while the pointer selects the contract used for new
-ingestion. Every newly consumed raw record stores the selected version in
+source schema contract, while the pointer selects the default contract for new
+ingestion. Original-file `source_schema_version` and release manifest versions
+override that default explicitly. Every newly consumed raw record stores its selected version in
 `_schema_version`; the same value is also stored in the ingestion-run metadata
 and the source-file registry. Increment the pointer only when the source schema
 contract or its interpretation changes.
 
 Changing `current_schema_version` does not itself re-consume unchanged source
 files or rewrite historical raw rows. Existing rows retain the version under
-which they were ingested, while new or changed files use the current version.
+which they were ingested, while new releases use their declared versions.
 Rebuilding history is a separate, explicit backfill operation.
 
 Version-specific source parsing and mapping settings are nested by version:
@@ -170,8 +214,8 @@ builds the analysis-ready `integrated_taxi_trips` table.
 
 The normal-table pipeline:
 
-- resolves repeated business keys by preferring the highest source schema version
-  and then the latest ingestion timestamp,
+- resolves repeated business keys by latest ingestion timestamp, with source
+  schema version as a tie-breaker rather than a record revision number,
 - preserves `source_schema_version` for one-record outputs and
   `source_schema_versions` for hourly air-quality aggregates,
 - writes records that fail required-key, timestamp, project-period, duration,
@@ -179,7 +223,7 @@ The normal-table pipeline:
 - validates non-null and unique primary keys for lookup and hourly tables,
 - standardizes timestamps as local `timestamp_ntz` values,
 - normalizes measurement types and replaces invalid measurements with nulls,
-- removes taxi trips with invalid durations or timestamps outside Q1 2024,
+- removes taxi trips with invalid durations or timestamps outside configured coverage periods,
 - deduplicates taxi trips using the ingestion record hash,
 - flags zero-distance trips, invalid distances, and financial adjustments,
 - aggregates valid NYC PM2.5 observations into one city-level value per hour.

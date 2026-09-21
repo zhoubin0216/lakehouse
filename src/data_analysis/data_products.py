@@ -153,6 +153,8 @@ def build_data_products(
     spark: SparkSession,
     config: dict,
     product_name: str | None = None,
+    scope_predicate: str | None = None,
+    source_version: int | None = None,
 ) -> list[dict]:
     """Refresh one or all products from one pinned Integrated Delta snapshot."""
     definitions = config["data_analysis"]["products"]["definitions"]
@@ -168,12 +170,13 @@ def build_data_products(
     source_table = config["data_integration"]["integrated_taxi_trips_table"]
     source_path = table_path(config, source_table)
     source_state = delta_snapshot(spark, source_path)
+    if source_version is not None:
+        source_state["version"] = source_version
     integrated = (
         spark.read.format("delta")
         .option("versionAsOf", source_state["version"])
         .load(source_path)
     )
-    source_versions = collect_schema_version_snapshot(integrated)
     existing = load_catalog_records(spark, config)
     refreshed_records = []
 
@@ -182,7 +185,14 @@ def build_data_products(
         refreshed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         created_at = existing.get(name, {}).get("created_at") or refreshed_at
         started = time.perf_counter()
-        product = PRODUCT_BUILDERS[name](integrated)
+        output_path = table_path(config, definition["table"])
+        from delta.tables import DeltaTable
+        from src.incremental.storage import replace_scope
+        predicate = scope_predicate if DeltaTable.isDeltaTable(spark, output_path) else None
+        source = integrated.filter(predicate) if predicate else integrated
+        # Row metadata describes the source scope actually recomputed.
+        source_versions = collect_schema_version_snapshot(source)
+        product = PRODUCT_BUILDERS[name](source)
         product = attach_product_metadata(
             product,
             product_name=name,
@@ -195,8 +205,11 @@ def build_data_products(
         ).persist(StorageLevel.MEMORY_AND_DISK)
         try:
             row_count = product.count()
-            output_path = table_path(config, definition["table"])
-            write_delta(product, output_path, partitions=definition.get("partitions"))
+            if predicate:
+                replace_scope(product, output_path, predicate)
+                row_count = spark.read.format("delta").load(output_path).count()
+            else:
+                write_delta(product, output_path, partitions=definition.get("partitions"))
         finally:
             product.unpersist(blocking=True)
         output_state = delta_snapshot(spark, output_path)

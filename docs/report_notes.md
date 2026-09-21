@@ -37,7 +37,7 @@ Use this file as the shared source for the final 3-5 page design report.
 
 ## Data Cleaning and Standardization
 
-- For repeated lookup or hourly business keys, prefer the highest source schema version and then the latest ingestion timestamp.
+- For repeated lookup or hourly business keys, prefer the latest ingestion timestamp, then the source schema version as a tie-breaker. Schema versions identify contracts, not record revision order.
 - Preserve a scalar `source_schema_version` for one-record Normal outputs and a sorted `source_schema_versions` set for air-quality hourly aggregates.
 - Write records that violate required-field, timestamp, project-period, duration, measurement, or unit rules to `rejected/cleaning/<dataset>` instead of silently dropping them.
 - Validate that lookup and hourly-table primary keys are present, non-null, and unique.
