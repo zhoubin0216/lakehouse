@@ -3,12 +3,20 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import time
 
 from src.common import create_spark, load_config
 from src.data_aggregation.aggregate_tables import build_aggregate_tables
 from src.data_cleaning.normal_tables import build_normal_tables
 from src.data_consumption.raw_tables import build_raw_tables
 from src.data_integration.integrated_tables import build_integrated_tables
+from src.monitoring.logger import (
+    safe_record_operation,
+    utc_now,
+)
+from src.monitoring.queries import (
+    run_monitoring_queries,
+)
 
 def run_incremental_pipeline(spark, config: dict) -> dict:
     """Consume sources and rebuild derived tables only when new valid rows arrive."""
@@ -56,7 +64,7 @@ def run_pipeline_step(spark, config: dict, step: str):
         "normal": build_normal_tables,
         "integrated": build_integrated_tables,
         "aggregate": build_aggregate_tables,
-
+        "monitoring": run_monitoring_queries,
     }
     return steps[step](spark, config)
 
@@ -67,7 +75,7 @@ def main() -> None:
     )
     parser.add_argument(
         "step",
-        choices=["raw", "normal", "integrated", "aggregate", "all", "updates"],
+        choices=["raw", "normal", "integrated", "aggregate", "all", "updates", "monitoring",],
     )
     parser.add_argument("--manifest", type=Path, help="Immutable release manifest (updates only)")
     args = parser.parse_args()
@@ -76,11 +84,116 @@ def main() -> None:
 
     config = load_config()
     spark = create_spark()
+
+    started_at = utc_now()
+    started = time.perf_counter()
+
+    result = None
+
     try:
         if args.step == "updates":
-            run_updates(spark, config, args.manifest)
+            result = run_updates(
+                spark,
+                config,
+                args.manifest,
+            )
         else:
-            run_pipeline_step(spark, config, args.step)
+            result = run_pipeline_step(
+                spark,
+                config,
+                args.step,
+            )
+
+    except Exception as error:
+        finished_at = utc_now()
+
+        safe_record_operation(
+            spark,
+            config,
+            operation_type="pipeline_command",
+            pipeline_step=args.step,
+            operation_name=f"src.pipeline {args.step}",
+            status="FAILED",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_seconds=(
+                    time.perf_counter() - started
+            ),
+            error=error,
+            details={
+                "manifest":
+                    str(args.manifest)
+                    if args.manifest
+                    else None
+            },
+        )
+
+        raise
+
+    else:
+        finished_at = utc_now()
+
+        processed_records = None
+        inserted_records = None
+        rejected_records = None
+
+        details = {
+            "manifest":
+                str(args.manifest)
+                if args.manifest
+                else None
+        }
+
+        if (
+                isinstance(result, dict)
+                and "accepted_records" in result
+        ):
+            inserted_records = int(
+                result.get(
+                    "accepted_records",
+                    0,
+                )
+            )
+
+            rejected_records = int(
+                result.get(
+                    "rejected_records",
+                    0,
+                )
+            )
+
+            processed_records = (
+                    inserted_records
+                    + rejected_records
+            )
+
+            details["consumed_files"] = (
+                result.get("consumed_files")
+            )
+
+        elif isinstance(result, list):
+            details["release_attempts"] = len(
+                result
+            )
+
+        safe_record_operation(
+            spark,
+            config,
+            operation_type="pipeline_command",
+            pipeline_step=args.step,
+            operation_name=f"src.pipeline {args.step}",
+            status="SUCCESS",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_seconds=(
+                    time.perf_counter() - started
+            ),
+            processed_records=processed_records,
+            inserted_records=inserted_records,
+            rejected_records=rejected_records,
+            details=details,
+        )
+
     finally:
         spark.stop()
 

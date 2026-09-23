@@ -1,10 +1,14 @@
 """Small shared primitives for local, single-writer incremental releases."""
 from contextlib import contextmanager
-import fcntl
+
 import hashlib
 import json
+import os
 from pathlib import Path
-
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
 
@@ -27,14 +31,79 @@ def save_json(path, value):
 
 @contextmanager
 def writer_lock(root):
-    Path(root).mkdir(parents=True, exist_ok=True)
-    with (Path(root) / ".lock").open("a") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        try:
-            yield
-        finally:
-            fcntl.flock(stream, fcntl.LOCK_UN)
+    """
+    Cross-platform single-writer lock.
 
+    Windows uses msvcrt.
+    Linux/macOS use fcntl.
+    """
+
+    root = Path(root)
+    root.mkdir(parents=True, exist_ok=True)
+
+    lock_path = root / ".lock"
+
+    # Binary mode works with the Windows byte-range lock.
+    with lock_path.open("a+b") as stream:
+
+        if os.name == "nt":
+            # msvcrt.locking() needs at least one byte
+            # available in the file to lock.
+            stream.seek(0, 2)
+
+            if stream.tell() == 0:
+                stream.write(b"\0")
+                stream.flush()
+
+            stream.seek(0)
+
+            try:
+                msvcrt.locking(
+                    stream.fileno(),
+                    msvcrt.LK_NBLCK,
+                    1,
+                )
+
+            except OSError as error:
+                raise RuntimeError(
+                    "Another incremental writer "
+                    "is already running."
+                ) from error
+
+            try:
+                yield
+
+            finally:
+                stream.seek(0)
+
+                msvcrt.locking(
+                    stream.fileno(),
+                    msvcrt.LK_UNLCK,
+                    1,
+                )
+
+        else:
+            try:
+                fcntl.flock(
+                    stream,
+                    fcntl.LOCK_EX
+                    | fcntl.LOCK_NB,
+                )
+
+            except BlockingIOError as error:
+                raise RuntimeError(
+                    "Another incremental writer "
+                    "is already running."
+                ) from error
+
+            try:
+                yield
+
+            finally:
+                fcntl.flock(
+                    stream,
+                    fcntl.LOCK_UN,
+                )
 
 def read(spark, path, version=None):
     reader = spark.read.format("delta")

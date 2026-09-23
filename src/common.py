@@ -82,8 +82,43 @@ def validate_config(config: dict) -> None:
             resolve_schema_definition(dataset_name, dataset_config, source_version)
 
     validate_data_products_config(config)
+    validate_monitoring_config(config)
 
+def validate_monitoring_config(config: dict) -> None:
+    """Validate optional Week 3 monitoring configuration."""
 
+    monitoring = config.get("monitoring")
+
+    if monitoring is None:
+        return
+
+    if not isinstance(monitoring, dict):
+        raise ValueError(
+            "monitoring must be a YAML mapping"
+        )
+
+    if not isinstance(
+        monitoring.get("enabled", True),
+        bool,
+    ):
+        raise ValueError(
+            "monitoring.enabled must be true or false"
+        )
+
+    for key in (
+        "pipeline_runs_table",
+        "schema_events_table",
+    ):
+        value = monitoring.get(key)
+
+        if (
+            not isinstance(value, str)
+            or not value.strip()
+        ):
+            raise ValueError(
+                f"monitoring.{key} must be "
+                "a non-empty relative table path"
+            )
 def validate_data_products_config(config: dict) -> None:
     """Validate Task 4 analytical product contracts when configured."""
     analysis = config.get("data_analysis")

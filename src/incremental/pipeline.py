@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import re
 import time
+import uuid
+
 
 from delta.tables import DeltaTable
 from pyspark.sql import functions as F
@@ -24,7 +26,12 @@ from src.incremental.storage import (
     save_json, version, writer_lock,
 )
 from src.incremental.refresh import affected_product_rows, refresh_aggregates
-
+from datetime import datetime, timezone
+from src.monitoring.logger import (
+    safe_record_incremental_attempt,
+    safe_record_schema_events,
+    utc_now,
+)
 
 RAW_KEYS = {
     "yellow_taxi_trips": ["_record_hash"],
@@ -79,14 +86,81 @@ def validate_manifest(path, config):
     return manifest
 
 
-def save_rejections(df, config, dataset, stage, release):
-    count = df.count()
-    if count:
-        (df.withColumn("_release_id", F.lit(release)).write.format("delta")
-         .mode("append").option("mergeSchema", "true")
-         .option("txnAppId", f"{release}:{dataset}:{stage}:rejects").option("txnVersion", 0)
-         .save(rejected_table_path(config, stage, dataset)))
-    return count
+def save_rejections(
+    df,
+    config,
+    dataset,
+    stage,
+    release,
+):
+
+    metrics = (
+        df.select(
+            F.size(
+                "_rejection_reasons"
+            ).alias("failure_count")
+        )
+        .agg(
+            F.count("*").alias(
+                "rejected_records"
+            ),
+
+            F.coalesce(
+                F.sum("failure_count"),
+                F.lit(0),
+            ).alias(
+                "validation_failures"
+            ),
+        )
+        .first()
+    )
+
+    rejected_records = int(
+        metrics["rejected_records"]
+    )
+
+    validation_failures = int(
+        metrics["validation_failures"]
+    )
+
+    if rejected_records:
+        (
+            df
+            .withColumn(
+                "_release_id",
+                F.lit(release),
+            )
+            .write
+            .format("delta")
+            .mode("append")
+            .option(
+                "mergeSchema",
+                "true",
+            )
+            .option(
+                "txnAppId",
+                f"{release}:{dataset}:{stage}:rejects",
+            )
+            .option(
+                "txnVersion",
+                0,
+            )
+            .save(
+                rejected_table_path(
+                    config,
+                    stage,
+                    dataset,
+                )
+            )
+        )
+
+    return {
+        "rejected_records":
+            rejected_records,
+
+        "validation_failures":
+            validation_failures,
+    }
 
 
 def process_source(spark, config, manifest_path, entry, directory, state, checkpoint):
@@ -105,7 +179,7 @@ def process_source(spark, config, manifest_path, entry, directory, state, checkp
         for field in previous.schema:
             if field.name in ("_source_file_size", "_source_modified_time"):
                 accepted = accepted.withColumn(field.name, F.col(field.name).cast(field.dataType))
-        rejected_count = save_rejections(rejected, config, name, "consumption", release)
+        rejection_metrics = save_rejections(rejected, config, name, "consumption", release)
         accepted = fit_legacy_raw(accepted, previous)
         # Materialize strict CSV casts before key aggregation. Otherwise Spark
         # 3.5 expands their inferred constraints combinatorially in wide plans.
@@ -113,13 +187,44 @@ def process_source(spark, config, manifest_path, entry, directory, state, checkp
         accepted.write.format("delta").mode("overwrite").save(str(parsed))
         accepted = read(spark, parsed)
         input_count = accepted.count()
-        if "records" in entry and input_count + rejected_count != entry["records"]:
-            raise ValueError(f"{name}: parsed count does not match the release manifest")
+        if (
+                "records" in entry
+                and input_count
+                + rejection_metrics["rejected_records"]
+                != entry["records"]
+        ):
+            raise ValueError(
+                f"{name}: parsed count does not match the release manifest"
+            )
         novel_records(accepted, previous, name).write.format("delta").mode("overwrite").save(str(staged))
         count = read(spark, staged).count()
-        progress.update(staged=True, input_records=input_count + rejected_count,
-                        inserted_raw=count, ignored_duplicates=input_count-count,
-                        consumption_rejected=rejected_count, schema_version=entry["schema_version"])
+        progress.update(
+            staged=True,
+
+            input_records=
+            input_count
+            + rejection_metrics[
+                "rejected_records"
+            ],
+
+            inserted_raw=count,
+
+            ignored_duplicates=
+            input_count - count,
+
+            consumption_rejected=
+            rejection_metrics[
+                "rejected_records"
+            ],
+
+            consumption_validation_failures=
+            rejection_metrics[
+                "validation_failures"
+            ],
+
+            schema_version=
+            entry["schema_version"],
+        )
         checkpoint()
     incoming = read(spark, staged)
     if not progress.get("raw_done"):
@@ -132,9 +237,25 @@ def process_source(spark, config, manifest_path, entry, directory, state, checkp
         checkpoint()
     normal_stage = directory / f"normal_{name}"
     if not progress["inserted_raw"]:
-        progress.update(normal_changed=0, cleaning_rejected=0, normal_staged=True, normal_done=True)
+        progress.update(
+            normal_changed=0,
+            cleaning_rejected=0,
+            cleaning_validation_failures=0,
+            validation_failures=progress.get(
+                "consumption_validation_failures",
+                0,
+            ),
+            normal_staged=True,
+            normal_done=True,
+        )
+
         checkpoint()
-        print(f"{name}: no new content; normal unchanged", flush=True)
+
+        print(
+            f"{name}: no new content; normal unchanged",
+            flush=True,
+        )
+
         return
     if not progress.get("normal_staged"):
         # Recompute full affected hours for AQ, not only the new stations.
@@ -151,7 +272,29 @@ def process_source(spark, config, manifest_path, entry, directory, state, checkp
         previous = read(spark, table_path(config, ds["normal_table"]), state["base"][name]["normal"])
         changed_rows(normal, previous, NORMAL_KEYS[name]).write.format("delta").mode("overwrite").save(str(normal_stage))
         progress["normal_changed"] = read(spark, normal_stage).count()
-        progress["cleaning_rejected"] = save_rejections(rejects, config, name, "cleaning", release)
+        cleaning_metrics = save_rejections(rejects, config, name, "cleaning", release)
+        progress["cleaning_rejected"] = (
+            cleaning_metrics[
+                "rejected_records"
+            ]
+        )
+
+        progress[
+            "cleaning_validation_failures"
+        ] = cleaning_metrics[
+            "validation_failures"
+        ]
+        progress["validation_failures"] = (
+                progress.get(
+                    "consumption_validation_failures",
+                    0,
+                )
+                +
+                progress.get(
+                    "cleaning_validation_failures",
+                    0,
+                )
+        )
         progress["normal_staged"] = True
         checkpoint()
     if not progress.get("normal_done"):
@@ -221,6 +364,8 @@ def apply_release(spark, config, manifest_path):
 
 def _apply_release(spark, config, manifest_path, manifest, root):
     started = time.perf_counter()
+    attempt_id = str(uuid.uuid4())
+    attempt_started_at = utc_now()
     release = manifest["release_id"]
     directory = root / release
     state_path = directory / "state.json"
@@ -232,6 +377,20 @@ def _apply_release(spark, config, manifest_path, manifest, root):
             raise ValueError("A processed manifest must be immutable")
         if state["status"] == "complete":
             print(f"{release}: already complete; no Delta writes", flush=True)
+            attempt_finished_at = utc_now()
+
+            safe_record_incremental_attempt(
+                spark,
+                config,
+                manifest,
+                state,
+                attempt_id=attempt_id,
+                started_at=attempt_started_at,
+                finished_at=attempt_finished_at,
+                duration_seconds=time.perf_counter() - started,
+                status="SKIPPED",
+                include_dataset_rows=False,
+            )
             return dict(release_id=release, already_complete=True, inserted_raw=0)
         if state["fingerprint"] != fingerprint:
             raise ValueError("Release/config changed after execution started; use a new release ID or explicit migration")
@@ -258,9 +417,70 @@ def _apply_release(spark, config, manifest_path, manifest, root):
     state["status"] = "running"
     state.pop("error", None)
     checkpoint()
+
     try:
         for entry in manifest["datasets"]:
-            process_source(spark, config, manifest_path, entry, directory, state, checkpoint)
+
+            dataset_name = entry["dataset"]
+
+            progress = state["datasets"].setdefault(
+                dataset_name,
+                {},
+            )
+
+            already_completed = (
+                    progress.get("normal_done")
+                    is True
+            )
+
+            dataset_started_at = (
+                datetime.now(timezone.utc)
+                .replace(tzinfo=None)
+            )
+
+            dataset_started = time.perf_counter()
+
+            try:
+                process_source(
+                    spark,
+                    config,
+                    manifest_path,
+                    entry,
+                    directory,
+                    state,
+                    checkpoint,
+                )
+
+                progress["attempt_status"] = (
+                    "SKIPPED"
+                    if already_completed
+                    else "SUCCESS"
+                )
+
+            except Exception:
+                progress["attempt_status"] = "FAILED"
+                raise
+
+            finally:
+                dataset_finished_at = (
+                    datetime.now(timezone.utc)
+                    .replace(tzinfo=None)
+                )
+
+                progress["processing_seconds"] = (
+                        time.perf_counter()
+                        - dataset_started
+                )
+
+                progress["started_at"] = (
+                    dataset_started_at.isoformat()
+                )
+
+                progress["finished_at"] = (
+                    dataset_finished_at.isoformat()
+                )
+
+                checkpoint()
         scope = integrate_changes(spark, config, directory, state, checkpoint)
         if state["integrated_changed"]:
             months = [tuple(r) for r in scope.select("pickup_year", "pickup_month").distinct().collect()]
@@ -291,9 +511,49 @@ def _apply_release(spark, config, manifest_path, manifest, root):
         state["last_attempt_seconds"] = time.perf_counter() - started
         state.pop("error", None)
         checkpoint()
+        attempt_finished_at = utc_now()
+
+        safe_record_incremental_attempt(
+            spark,
+            config,
+            manifest,
+            state,
+            attempt_id=attempt_id,
+            started_at=attempt_started_at,
+            finished_at=attempt_finished_at,
+            duration_seconds=state["last_attempt_seconds"],
+            status="SUCCESS",
+        )
+
+        safe_record_schema_events(
+            spark,
+            config,
+            manifest,
+            run_id=attempt_id,
+        )
         return state
     except Exception as error:
         state["status"] = "failed"
+
         state["error"] = str(error)
+
+        state["last_attempt_seconds"] = (
+                time.perf_counter() - started
+        )
+
         checkpoint()
+        attempt_finished_at = utc_now()
+
+        safe_record_incremental_attempt(
+            spark,
+            config,
+            manifest,
+            state,
+            attempt_id=attempt_id,
+            started_at=attempt_started_at,
+            finished_at=attempt_finished_at,
+            duration_seconds=state["last_attempt_seconds"],
+            status="FAILED",
+            error=error,
+        )
         raise

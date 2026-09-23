@@ -32,7 +32,7 @@ def write_single(df, path, fmt):
     shutil.rmtree(temporary)
 
 
-def generate(spark, config, release="week3_release2"):
+def generate(spark, config, release="week3_release2",inject_invalid=False,):
     settings = config["incremental"]
     if not re.fullmatch(r"[A-Za-z0-9_-]+", release):
         raise ValueError("Invalid release ID")
@@ -100,6 +100,19 @@ def generate(spark, config, release="week3_release2"):
     weather = original_columns(weather, weather_def).withColumn("humidity", F.coalesce(F.col("rhum"), F.lit(65.0)))
     weather = weather.withColumn("humidity", F.greatest(F.lit(20.0), F.least(F.lit(100.0), F.col("humidity"))))
 
+    if inject_invalid:
+        # Inject exactly one invalid weather record.
+        weather = weather.withColumn(
+            "humidity",
+            F.when(
+                (F.col("year") == start.year)
+                & (F.col("month") == start.month)
+                & (F.col("day") == start.day)
+                & (F.col("hour") == start.hour),
+                F.lit(150.0),
+            ).otherwise(F.col("humidity")),
+        )
+
     air_def = resolve_schema_definition("air_quality", datasets["air_quality"], 1)[1]
     station_keys = ["state_code", "county_code", "site_num", "parameter_code", "poc"]
     stations = raw["air_quality"].filter(
@@ -111,6 +124,34 @@ def generate(spark, config, release="week3_release2"):
     air = air.withColumn("date_of_last_change", F.to_date("ts"))
     air = air.withColumn("sample_measurement", (F.lit(4.0) + F.pmod(F.xxhash64(*station_keys, "id"), F.lit(220)) / 10).cast("double"))
     air = original_columns(air, air_def).withColumn("aqi", F.round(F.col("Sample Measurement") * 3, 0))
+
+    if inject_invalid:
+        # Deterministically inject exactly one invalid AQI record.
+        validation_window = Window.orderBy(
+            "State Code",
+            "County Code",
+            "Site Num",
+            "POC",
+            "Date Local",
+            "Time Local",
+        )
+
+        air = (
+            air
+            .withColumn(
+                "_validation_row",
+                F.row_number().over(validation_window),
+            )
+            .withColumn(
+                "aqi",
+                F.when(
+                    F.col("_validation_row") == 1,
+                    F.lit(-1.0),
+                ).otherwise(F.col("aqi")),
+            )
+            .drop("_validation_row")
+        )
+
     zones_def = resolve_schema_definition("taxi_zone_lookup", datasets["taxi_zone_lookup"], 1)[1]
     zones = original_columns(raw["taxi_zone_lookup"].limit(0), zones_def)
     outputs = {"yellow_taxi_trips": (taxi, "taxi_updates.parquet", 1),
@@ -144,15 +185,36 @@ def generate(spark, config, release="week3_release2"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--release", default="week3_release2")
+    parser = argparse.ArgumentParser(
+        description=__doc__
+    )
+
+    parser.add_argument(
+        "--release",
+        default="week3_release2",
+    )
+
+    parser.add_argument(
+        "--inject-invalid",
+        action="store_true",
+        help="Inject a small number of invalid records for validation monitoring tests.",
+    )
+
     args = parser.parse_args()
+
     spark = create_spark()
+
     try:
-        print(generate(spark, load_config(), args.release))
+        print(
+            generate(
+                spark,
+                load_config(),
+                args.release,
+                inject_invalid=args.inject_invalid,
+            )
+        )
     finally:
         spark.stop()
-
 
 if __name__ == "__main__":
     main()

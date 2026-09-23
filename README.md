@@ -21,7 +21,7 @@ quality add the following week's hourly records with numeric `humidity` and
 `aqi`. The unchanged zone lookup has a header-only CSV. These are synthetic
 fixtures, not new real observations or official AQI calculations.
 
-`python -m src.pipeline updates` discovers all release manifests. Repeating the
+`python -m src.pipeline updates` discovers all release manifests. Repeating the[Week3_Task3_README_section.md](../../../../../../../Downloads/Week3_Task3_README_section.md)
 command resumes an interrupted release or skips completed releases without
 Delta writes. `all` also discovers releases after checking the original inputs.
 Keep the original source files immutable; deliver corrections as a new release.
@@ -45,6 +45,122 @@ because the schema pointer changes. New nullable fields read as null on old rows
 
 Implementation and Task 2 design discussion: [docs/week3_tasks1_2.md](docs/week3_tasks1_2.md).
 Tasks 3-5 are outside this implementation.
+## Week 3: Operational Monitoring (Task 3)
+
+Task 3 adds operational monitoring around the incremental update pipeline. The
+monitoring layer records both release-level executions and per-dataset update
+metrics in Delta tables so pipeline behavior can be inspected with Spark SQL.
+Monitoring is best-effort: a monitoring write failure is reported as a warning
+but does not invalidate a successful business-data update.
+
+Enable monitoring in `configs/config.yaml`:
+
+```yaml
+monitoring:
+  enabled: true
+  pipeline_runs_table: monitoring/pipeline_runs
+  schema_events_table: monitoring/schema_events
+```
+
+The main monitoring table is `monitoring/pipeline_runs`. It records:
+
+- run and parent-run identifiers,
+- release ID, operation type, pipeline step, dataset, and target table,
+- execution status and UTC start/finish timestamps,
+- processing duration,
+- processed, inserted, duplicate, and rejected record counts,
+- validation-failure count,
+- source schema version,
+- error type/message and compact JSON details when available.
+
+Incremental releases use three semantic levels. `pipeline_command` records the
+CLI command, `incremental_release` records one release attempt, and
+`dataset_update` records each dataset handled by that attempt. Completed releases
+are skipped without Delta rewrites. During resume, datasets already completed in
+the persisted release state are marked `SKIPPED`; newly executed datasets are
+marked `SUCCESS`, and failures are retained as `FAILED` records.
+
+For dataset updates, `processed_records` is the number of source records
+attempted, including consumption-stage rejected records. `inserted_records` is
+the number of novel accepted raw records appended after duplicate detection.
+`rejected_records` combines consumption-stage and cleaning-stage rejected rows.
+Because cleaning rejects are a subset of rows already inserted into the raw
+layer, `processed_records` is not expected to equal
+`inserted_records + duplicate_records + rejected_records`.
+
+`validation_failures` counts failed validation rules, not only rejected rows. A
+single rejected record may therefore contribute more than one validation
+failure. Detailed rejected rows and their `_rejection_reasons` remain in the
+existing rejected Delta tables.
+
+Schema-version transitions are recorded separately in
+`monitoring/schema_events`. The table stores the old and new schema versions,
+added/removed columns, changed types, compatibility, release ID, and detection
+time. The current Week 3 fixture records the additive weather `humidity` and air
+quality `aqi` changes from schema version 1 to version 2.
+
+Run an incremental release and then execute all monitoring queries:
+
+```bash
+python -m src.pipeline updates --manifest data/raw/updates/week3_release2/manifest.json
+python -m src.pipeline monitoring
+```
+
+The monitoring query command executes the Task 3 Spark SQL files under
+`src/monitoring/sql/`:
+
+| Query | Purpose |
+|---|---|
+| `validation_failures_by_dataset` | Compare validation failures and rejected records by dataset |
+| `processing_time_by_dataset` | Compare average, maximum, and minimum dataset processing time |
+| `rejected_records_by_run` | Inspect rejected records and validation failures for each dataset execution |
+| `processing_time_trend` | Inspect successful processing time over repeated executions |
+| `schema_evolution_history` | Inspect recorded schema-version changes |
+
+List or run monitoring queries directly:
+
+```bash
+python -m src.monitoring.queries --list
+python -m src.monitoring.queries --query processing_time_by_dataset
+```
+
+Preview the persisted monitoring tables with the existing Delta viewer:
+
+```bash
+python -m src.view_table monitoring/pipeline_runs --limit 100 --no-count
+python -m src.view_table monitoring/schema_events --limit 100 --no-count
+```
+
+The Delta tables are stored under:
+
+```text
+data/lakehouse/monitoring/
+  pipeline_runs/
+  schema_events/
+```
+
+A deterministic validation fixture can be generated to demonstrate that invalid
+records are rejected and counted without failing the whole release. Use a fresh
+release ID because generated releases are immutable:
+
+```bash
+python -m src.incremental.generate \
+  --release week3_validation_test \
+  --inject-invalid
+python -m src.pipeline updates \
+  --manifest data/raw/updates/week3_validation_test/manifest.json
+python -m src.pipeline monitoring
+```
+
+The validation fixture injects one out-of-range weather humidity value and one
+out-of-range AQI value. These records are expected to appear in the rejected
+record counts while the valid part of the release continues normally.
+
+For production monitoring, useful derived signals include processing latency and
+throughput trends, rejected-record and validation-failure rates, duplicate rate,
+failed-run frequency, schema-change events, and repeated dataset retries. These
+metrics can be used for dashboards and threshold-based alerts, while the Delta
+history provides an auditable execution record.
 
 ## Week 1: Data Platform
 
