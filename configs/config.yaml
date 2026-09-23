@@ -23,6 +23,12 @@ incremental:
   days: 7
   seed: 2221
 
+monitoring:
+  enabled: true
+
+  pipeline_runs_table: monitoring/pipeline_runs
+  schema_events_table: monitoring/schema_events
+
 data_integration:
   integrated_taxi_trips_table: integrated/integrated_taxi_trips
   partitions: [pickup_year, pickup_month]
