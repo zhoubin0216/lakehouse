@@ -13,6 +13,11 @@ flowchart LR
     State["Durable stage checkpoints + replay staging"] --- Updates
     Products --> Catalog["Product catalog"]
     Benchmark["Independent benchmark entrypoint"] -. reads .-> IntegratedMerge
+    Updates --> Validation["Rule validation + quarantine"]
+    RawMerge --> Validation
+    NormalMerge --> Validation
+    IntegratedMerge --> Validation
+    Validation --> Summary["Validation rule summary"]
 ```
 
 The Week 1 manual full-build commands remain available. Week 3 updates use the
@@ -63,7 +68,8 @@ flowchart LR
         Products["data/lakehouse/analysis/products<br/>four reusable Delta products"]
         ProductCatalog["analysis/product_catalog<br/>refresh and product metadata"]
         HtmlReport["data/reports<br/>standalone Task 4 HTML report"]
-        Rejected["data/lakehouse/rejected<br/>consumption and cleaning rejects"]
+        Rejected["data/lakehouse/rejected<br/>consumption, cleaning,<br/>deduplication and reference rejects"]
+        ValidationSummary["data/lakehouse/validation<br/>rule-level failure summary"]
     end
 
     TaxiFiles --> Consumption
@@ -86,6 +92,8 @@ flowchart LR
     Consumption --> Runs
     Raw --> Cleaning
     Cleaning --> Rejected
+    Integration --> Rejected
+    Rejected --> ValidationSummary
     Cleaning --> Normal
     Normal --> Integration
     Integration --> Integrated
@@ -154,6 +162,10 @@ data/
     rejected/
       consumption/             Row-level source type conversion failures
       cleaning/                Business-rule and required-field failures
+      deduplication/           Exact duplicates and conflicting revisions
+      reference/               Missing lookup references
+    validation/
+      rule_summary/            Counts by dataset, stage, rule, and category
   metadata/
     source_file_registry/      File state and last successful schema version
     ingestion_runs/            Per-run status, schema version, counts, and errors

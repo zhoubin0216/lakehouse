@@ -3,7 +3,16 @@ from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
 from src.common import read_delta, table_path, write_delta
-from src.data_quality import classify_records, write_rejected_records
+from src.data_quality import (
+    classify_records,
+    combine_rejections,
+    minimum_rule,
+    non_empty_text_rule,
+    predicate_rule,
+    range_rule,
+    required_rule,
+    write_rejected_records,
+)
 
 
 def latest_schema_records(df: DataFrame, key_columns: list[str]) -> DataFrame:
@@ -26,6 +35,19 @@ def latest_schema_records(df: DataFrame, key_columns: list[str]) -> DataFrame:
         .filter(F.col("_schema_rank") == 1)
         .drop("_schema_rank")
     )
+
+
+def latest_complete_records(
+    df: DataFrame,
+    key_columns: list[str],
+) -> tuple[DataFrame, DataFrame]:
+    """Quarantine incomplete business keys before selecting the latest revision."""
+    complete, incomplete = classify_records(
+        df,
+        stage="cleaning",
+        rejection_rules=[required_rule(column) for column in key_columns],
+    )
+    return latest_schema_records(complete, key_columns), incomplete
 
 
 def validate_primary_key(
@@ -73,7 +95,8 @@ def clean_taxi_zones_with_rejections(
     df: DataFrame,
 ) -> tuple[DataFrame, DataFrame]:
     """Create the standardized taxi-zone dimension table."""
-    selected = latest_schema_records(df, ["location_id"]).select(
+    latest, incomplete = latest_complete_records(df, ["location_id"])
+    selected = latest.select(
         "location_id",
         "borough",
         "zone",
@@ -85,10 +108,9 @@ def clean_taxi_zones_with_rejections(
         selected,
         stage="cleaning",
         rejection_rules=[
-            ("location_id is required", F.col("location_id").isNull()),
-            ("borough is required", missing_text("borough")),
-            ("zone is required", missing_text("zone")),
-            ("service_zone is required", missing_text("service_zone")),
+            non_empty_text_rule("borough"),
+            non_empty_text_rule("zone"),
+            non_empty_text_rule("service_zone"),
         ],
     )
 
@@ -104,7 +126,7 @@ def clean_taxi_zones_with_rejections(
         .withColumn("zone", F.trim(F.col("zone")))
         .withColumn("service_zone", F.trim(F.col("service_zone")))
     )
-    return cleaned, rejected
+    return cleaned, combine_rejections(incomplete, rejected)
 
 
 def missing_text(column: str):
@@ -128,7 +150,8 @@ def clean_weather_with_rejections(
     df: DataFrame,
 ) -> tuple[DataFrame, DataFrame]:
     """Create one standardized weather observation per hour."""
-    selected = latest_schema_records(df, ["year", "month", "day", "hour"]).select(
+    latest, incomplete = latest_complete_records(df, ["year", "month", "day", "hour"])
+    selected = latest.select(
         "year",
         "month",
         "day",
@@ -162,12 +185,29 @@ def clean_weather_with_rejections(
         with_timestamp,
         stage="cleaning",
         rejection_rules=[
-            ("year is required", F.col("year").isNull()),
-            ("month is required", F.col("month").isNull()),
-            ("day is required", F.col("day").isNull()),
-            ("hour is required", F.col("hour").isNull()),
-            ("invalid event timestamp", F.col("event_timestamp").isNull()),
-            ("humidity must be between 0 and 100", F.col("humidity").isNotNull() & ~F.col("humidity").between(0, 100)),
+            predicate_rule(
+                "weather.valid_timestamp",
+                "invalid event timestamp",
+                "invalid_value",
+                lambda _df: F.col("event_timestamp").isNull(),
+            ),
+            range_rule(
+                "relative_humidity_pct", 0, 100,
+                "relative humidity must be between 0 and 100",
+            ),
+            minimum_rule("precipitation_mm", 0, "precipitation must be non-negative"),
+            minimum_rule("snow_depth_mm", 0, "snow depth must be non-negative"),
+            range_rule(
+                "wind_direction_deg", 0, 360,
+                "wind direction must be between 0 and 360",
+            ),
+            minimum_rule("wind_speed_kmh", 0, "wind speed must be non-negative"),
+            minimum_rule("wind_gust_kmh", 0, "wind gust must be non-negative"),
+            range_rule(
+                "cloud_cover_pct", 0, 100,
+                "cloud cover must be between 0 and 100",
+            ),
+            range_rule("humidity", 0, 100, "humidity must be between 0 and 100"),
         ],
     )
 
@@ -232,7 +272,7 @@ def clean_weather_with_rejections(
         "source_schema_version",
         "humidity",
     )
-    return result, rejected
+    return result, combine_rejections(incomplete, rejected)
 
 
 def clean_air_quality(df: DataFrame) -> DataFrame:
@@ -248,22 +288,24 @@ def clean_air_quality_with_rejections(
     expected_unit = "Micrograms/cubic meter (LC)"
     df = normalize_air_times(df)
 
+    key_columns = [
+        "state_code",
+        "county_code",
+        "site_num",
+        "parameter_code",
+        "poc",
+        "date_local",
+        "time_local",
+    ]
+    latest, incomplete = latest_complete_records(
+        df.filter(
+            (F.col("state_name") == "New York")
+            & F.col("county_name").isin(*nyc_counties)
+        ),
+        key_columns,
+    )
     selected = (
-        latest_schema_records(
-            df.filter(
-                (F.col("state_name") == "New York")
-                & F.col("county_name").isin(*nyc_counties)
-            ),
-            [
-                "state_code",
-                "county_code",
-                "site_num",
-                "parameter_code",
-                "poc",
-                "date_local",
-                "time_local",
-            ],
-        )
+        latest
         .select(
             "county_code",
             "site_num",
@@ -362,7 +404,7 @@ def clean_air_quality_with_rejections(
         "event_year",
         "event_month",
     )
-    return result, rejected
+    return result, combine_rejections(incomplete, rejected)
 
 
 def clean_taxi_trips(
@@ -386,7 +428,8 @@ def clean_taxi_trips_with_rejections(
         "timestampdiff(SECOND, pickup_timestamp, dropoff_timestamp)"
     )
 
-    selected = latest_schema_records(df, ["_record_hash"]).select(
+    latest, incomplete = latest_complete_records(df, ["_record_hash"])
+    selected = latest.select(
         F.col("_record_hash").alias("trip_id"),
         F.col("_schema_version").alias("source_schema_version"),
         "vendor_id",
@@ -425,6 +468,7 @@ def clean_taxi_trips_with_rejections(
             ("dropoff timestamp is required", F.col("dropoff_timestamp").isNull()),
             ("pickup location is required", F.col("pickup_location_id").isNull()),
             ("dropoff location is required", F.col("dropoff_location_id").isNull()),
+            ("trip distance is required", F.col("trip_distance").isNull()),
             (
                 "pickup timestamp is outside the configured period",
                 pickup_present
@@ -442,6 +486,11 @@ def clean_taxi_trips_with_rejections(
                     | (F.col("trip_duration_seconds") > max_duration)
                 ),
             ),
+            (
+                "trip distance is outside the allowed range",
+                F.col("trip_distance").isNotNull()
+                & ~F.col("trip_distance").between(0, max_distance),
+            ),
         ],
     )
 
@@ -449,9 +498,7 @@ def clean_taxi_trips_with_rejections(
         valid_trips
         .withColumn(
             "has_invalid_distance",
-            F.col("trip_distance").isNull()
-            | (F.col("trip_distance") < 0)
-            | (F.col("trip_distance") > max_distance),
+            F.lit(False),
         )
         .withColumn(
             "is_zero_distance",
@@ -499,7 +546,7 @@ def clean_taxi_trips_with_rejections(
             F.month("pickup_timestamp"),
         )
     )
-    return cleaned, rejected
+    return cleaned, combine_rejections(incomplete, rejected)
 
 
 def optional_double(df: DataFrame, name: str):

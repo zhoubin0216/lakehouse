@@ -14,6 +14,7 @@ data_consumption:
 
 data_quality:
   rejected_table_root: rejected
+  validation_summary_table: validation/rule_summary
 
 incremental:
   releases_root: data/raw/updates

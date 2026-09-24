@@ -10,6 +10,7 @@ from src.data_aggregation.aggregate_tables import build_aggregate_tables
 from src.data_cleaning.normal_tables import build_normal_tables
 from src.data_consumption.raw_tables import build_raw_tables
 from src.data_integration.integrated_tables import build_integrated_tables
+from src.data_quality import build_validation_report
 from src.monitoring.logger import (
     safe_record_operation,
     utc_now,
@@ -65,6 +66,7 @@ def run_pipeline_step(spark, config: dict, step: str):
         "integrated": build_integrated_tables,
         "aggregate": build_aggregate_tables,
         "monitoring": run_monitoring_queries,
+        "validation": build_validation_report,
     }
     return steps[step](spark, config)
 
@@ -75,7 +77,16 @@ def main() -> None:
     )
     parser.add_argument(
         "step",
-        choices=["raw", "normal", "integrated", "aggregate", "all", "updates", "monitoring",],
+        choices=[
+            "raw",
+            "normal",
+            "integrated",
+            "aggregate",
+            "all",
+            "updates",
+            "monitoring",
+            "validation",
+        ],
     )
     parser.add_argument("--manifest", type=Path, help="Immutable release manifest (updates only)")
     args = parser.parse_args()

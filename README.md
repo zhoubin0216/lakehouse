@@ -21,7 +21,7 @@ quality add the following week's hourly records with numeric `humidity` and
 `aqi`. The unchanged zone lookup has a header-only CSV. These are synthetic
 fixtures, not new real observations or official AQI calculations.
 
-`python -m src.pipeline updates` discovers all release manifests. Repeating the[Week3_Task3_README_section.md](../../../../../../../Downloads/Week3_Task3_README_section.md)
+`python -m src.pipeline updates` discovers all release manifests. Repeating the
 command resumes an interrupted release or skips completed releases without
 Delta writes. `all` also discovers releases after checking the original inputs.
 Keep the original source files immutable; deliver corrections as a new release.
@@ -44,7 +44,7 @@ file declares its own version in the manifest. Old rows are not rebuilt merely
 because the schema pointer changes. New nullable fields read as null on old rows.
 
 Implementation and Task 2 design discussion: [docs/week3_tasks1_2.md](docs/week3_tasks1_2.md).
-Tasks 3-5 are outside this implementation.
+
 ## Week 3: Operational Monitoring (Task 3)
 
 Task 3 adds operational monitoring around the incremental update pipeline. The
@@ -83,7 +83,10 @@ marked `SUCCESS`, and failures are retained as `FAILED` records.
 For dataset updates, `processed_records` is the number of source records
 attempted, including consumption-stage rejected records. `inserted_records` is
 the number of novel accepted raw records appended after duplicate detection.
-`rejected_records` combines consumption-stage and cleaning-stage rejected rows.
+`rejected_records` combines consumption-stage, cleaning-stage, conflicting
+revision, and missing-reference rejects. Exact duplicates are reported
+separately in `duplicate_records` even though their rows are also preserved in
+the deduplication quarantine.
 Because cleaning rejects are a subset of rows already inserted into the raw
 layer, `processed_records` is not expected to equal
 `inserted_records + duplicate_records + rejected_records`.
@@ -162,6 +165,52 @@ failed-run frequency, schema-change events, and repeated dataset retries. These
 metrics can be used for dashboards and threshold-based alerts, while the Delta
 history provides an auditable execution record.
 
+## Week 3: Extensible Validation (Task 4)
+
+Task 4 adds one validation framework shared by full builds and incremental
+updates. A bad row no longer needs to stop a whole dataset: valid rows continue,
+while invalid rows are excluded from downstream tables and written to a staged
+Delta quarantine with `_validation_rule_ids`, `_validation_categories`,
+`_rejection_reasons`, `_rejection_stage`, and `_rejected_at`.
+
+The framework detects:
+
+- exact duplicates and conflicting revisions,
+- invalid numeric, timestamp, duration, and configured-period values,
+- incomplete business keys and other required fields,
+- taxi trips whose pickup or dropoff zone does not exist,
+- unsupported source columns, physical types, and manifest schema versions.
+
+Quarantine tables are stored by validation stage:
+
+```text
+data/lakehouse/rejected/
+  consumption/<dataset>/
+  cleaning/<dataset>/
+  deduplication/<dataset>/
+  reference/<dataset>/
+```
+
+Generate the cross-dataset validation report after a full build or update:
+
+```bash
+python -m src.pipeline validation
+python -m src.view_table validation/rule_summary --limit 100 --no-count
+```
+
+The report groups failed records by dataset, stage, rule ID, category, and
+human-readable reason. Unsupported schema changes are intentionally handled as
+structured contract errors rather than row rejects, because the platform cannot
+safely interpret rows until a new schema version is registered.
+
+Generic rule factories such as required, non-empty, range, and minimum checks
+are reusable across datasets. Dataset-specific behavior is registered with a
+declarative predicate or reference rule; extending validation does not require
+editing the classification, quarantine, or reporting engine.
+
+Implementation details and the generic-versus-specific design discussion:
+[docs/week3_task4_validation.md](docs/week3_task4_validation.md).
+
 ## Week 1: Data Platform
 
 ### Minimal Platform
@@ -180,7 +229,7 @@ configs/config.yaml     Dataset and storage configuration
 src/pipeline.py         Thin command-line entrypoint
 src/view_table.py       Delta table preview helper for PyCharm/terminal
 src/common.py           Shared config, Spark, Delta IO, and timing helpers
-src/data_quality.py     Accepted/rejected record classification and storage
+src/data_quality.py     Extensible validation, quarantine, and rule reporting
 src/data_consumption/   source files -> raw Delta tables
 src/data_cleaning/      raw -> normal Delta tables
 src/data_integration/   normal -> integrated_taxi_trips
@@ -320,7 +369,8 @@ data/lakehouse/
   integrated/   Joined analysis-ready tables
   aggregate/    Aggregated summary tables
   benchmark/    Tables used for storage strategy comparison
-  rejected/     Consumption and cleaning rejected-record tables
+  rejected/     Consumption, cleaning, deduplication, and reference quarantines
+  validation/   Rule-level validation summary
 ```
 
 ### Data Cleaning and Integration
@@ -338,10 +388,12 @@ The normal-table pipeline:
   measurement, or unit rules to `rejected/cleaning/<dataset>`,
 - validates non-null and unique primary keys for lookup and hourly tables,
 - standardizes timestamps as local `timestamp_ntz` values,
-- normalizes measurement types and replaces invalid measurements with nulls,
+- normalizes measurement types and quarantines non-null values outside the
+  supported ranges,
 - removes taxi trips with invalid durations or timestamps outside configured coverage periods,
 - deduplicates taxi trips using the ingestion record hash,
-- flags zero-distance trips, invalid distances, and financial adjustments,
+- flags zero-distance trips and financial adjustments, while quarantining
+  distances outside the configured range,
 - aggregates valid NYC PM2.5 observations into one city-level value per hour.
 
 The integration pipeline enriches every retained taxi trip with:
@@ -356,9 +408,11 @@ ambiguous global schema version: `taxi_schema_version`,
 `pickup_zone_schema_version`, `dropoff_zone_schema_version`,
 `weather_schema_version`, and `air_quality_schema_versions`.
 
-All enrichment steps use left joins so trips remain available when contextual
-data is missing. Taxi zones, weather, and hourly air-quality data are broadcast
-during integration because they are small relative to the taxi-trip fact table.
+Weather and air-quality enrichment use left joins so trips remain available when
+optional contextual observations are missing. Pickup and dropoff taxi zones are
+required references; unknown IDs are quarantined before integration. Taxi zones,
+weather, and hourly air-quality data are broadcast during integration because
+they are small relative to the taxi-trip fact table.
 
 Run this step with:
 

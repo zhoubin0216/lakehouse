@@ -5,7 +5,11 @@ import pytest
 from pyspark.sql import SparkSession
 
 from src.common import read_delta, write_delta
-from src.data_quality import rejected_table_path, write_rejected_records
+from src.data_quality import (
+    SchemaContractError,
+    rejected_table_path,
+    write_rejected_records,
+)
 from src.data_consumption.metadata import mark_ingestion_success, start_ingestion_run
 from src.data_consumption.raw_tables import (
     add_lineage_columns,
@@ -125,5 +129,33 @@ def test_parquet_physical_type_mismatch_is_rejected(spark: SparkSession) -> None
         "column_types": {"id": "int"},
     }
 
-    with pytest.raises(ValueError, match="Parquet column types do not match"):
+    with pytest.raises(
+        SchemaContractError,
+        match="Parquet column types do not match",
+    ) as error:
         validate_parquet_column_types(source, schema_definition)
+
+    assert error.value.details == {
+        "change_type": "UNSUPPORTED_TYPE_CHANGE",
+        "type_mismatches": {"id": {"expected": "int", "actual": "bigint"}},
+    }
+
+
+def test_unsupported_columns_are_reported_as_a_schema_contract_change(
+    spark: SparkSession,
+) -> None:
+    source = spark.createDataFrame([(1, "new")], ["id", "extra"])
+    schema_definition = {
+        "format": "parquet",
+        "expected_columns": ["id", "name"],
+        "column_types": {"id": "bigint", "name": "string"},
+    }
+
+    with pytest.raises(SchemaContractError) as error:
+        validate_source_columns(source, schema_definition)
+
+    assert error.value.details == {
+        "change_type": "UNSUPPORTED_COLUMNS",
+        "missing_columns": ["name"],
+        "unexpected_columns": ["extra"],
+    }

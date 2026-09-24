@@ -49,6 +49,13 @@ def validate_config(config: dict) -> None:
     data_quality = config.get("data_quality")
     if not isinstance(data_quality, dict) or not data_quality.get("rejected_table_root"):
         raise ValueError("Configuration must define data_quality.rejected_table_root")
+    summary_table = data_quality.get("validation_summary_table")
+    if summary_table is not None and (
+        not isinstance(summary_table, str) or not summary_table.strip()
+    ):
+        raise ValueError(
+            "data_quality.validation_summary_table must be a non-empty relative path"
+        )
 
     datasets = config.get("datasets")
     if not isinstance(datasets, dict) or not datasets:

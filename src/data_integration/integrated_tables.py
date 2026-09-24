@@ -3,6 +3,39 @@ from pyspark.sql import functions as F
 
 from src.common import read_delta, table_path, write_delta
 from src.data_cleaning.normal_tables import optional_double
+from src.data_quality import (
+    ReferenceRule,
+    classify_reference_records,
+    write_rejected_records,
+)
+
+
+TAXI_ZONE_REFERENCE_RULES = [
+    ReferenceRule(
+        "reference.pickup_location_id",
+        "pickup_location_id",
+        "location_id",
+        "pickup location does not exist in taxi zone lookup",
+    ),
+    ReferenceRule(
+        "reference.dropoff_location_id",
+        "dropoff_location_id",
+        "location_id",
+        "dropoff location does not exist in taxi zone lookup",
+    ),
+]
+
+
+def validate_taxi_zone_references(
+    taxi_trips: DataFrame,
+    zones: DataFrame,
+) -> tuple[DataFrame, DataFrame]:
+    """Exclude trips whose required pickup/dropoff zones are unknown."""
+    return classify_reference_records(
+        taxi_trips,
+        zones,
+        TAXI_ZONE_REFERENCE_RULES,
+    )
 
 
 def prepare_pickup_zones(zones: DataFrame) -> DataFrame:
@@ -149,8 +182,23 @@ def build_integrated_tables(
         ),
     )
 
-    integrated = integrate_taxi_trips(
+    valid_taxi_trips, reference_rejected = validate_taxi_zone_references(
         taxi_trips,
+        zones,
+    )
+    rejected_count = write_rejected_records(
+        reference_rejected,
+        config,
+        stage="reference",
+        dataset_name="yellow_taxi_trips",
+        mode="overwrite",
+    )
+    print(
+        f"yellow_taxi_trips: wrote {rejected_count} reference rejected records"
+    )
+
+    integrated = integrate_taxi_trips(
+        valid_taxi_trips,
         zones,
         weather,
         air_quality,
