@@ -2,7 +2,7 @@ import json
 import math
 
 import pytest
-from pyspark.sql.types import DoubleType, IntegerType, StringType, StructField, StructType
+from pyspark.sql.types import ArrayType, DoubleType, IntegerType, StringType, StructField, StructType
 
 from src.data_analysis.optimization_benchmark import Variant, run_benchmark
 from src.data_analysis.result_validation import ResultSnapshot, compare_results
@@ -22,6 +22,16 @@ def test_validation_order_duplicates_and_types():
     assert not compare_results(expected, snapshot([("A", 1.0), ("B", 2.0), ("B", 2.0)]))["results_equal"]
     wrong_type = StructType([StructField("key", StringType()), StructField("value", IntegerType())])
     assert not compare_results(expected, snapshot([("A", 1), ("A", 1), ("B", 2)], wrong_type))["schema_equal"]
+
+
+def test_validation_ignores_nested_nullability_but_not_nested_type():
+    strict = StructType([StructField("values", ArrayType(IntegerType(), False), False)])
+    permissive = StructType([StructField("values", ArrayType(IntegerType(), True), True)])
+    wrong = StructType([StructField("values", ArrayType(StringType(), True), True)])
+    expected = ResultSnapshot.build(strict, [([1, 2],)])
+    actual = ResultSnapshot.build(permissive, [([1, 2],)])
+    assert compare_results(expected, actual)["results_equal"]
+    assert not compare_results(expected, ResultSnapshot.build(wrong, [(["1", "2"],)]))["schema_equal"]
 
 
 def test_float_tolerance_null_nan_inf():
