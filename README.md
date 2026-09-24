@@ -260,6 +260,9 @@ cluster-scale throughput or statistical significance.
 Methodology and design discussion:
 [docs/week3_task5_evaluation.md](docs/week3_task5_evaluation.md).
 
+Measured local example:
+[docs/benchmarks/week3/production_readiness.md](docs/benchmarks/week3/production_readiness.md).
+
 ## Week 1: Data Platform
 
 ### Minimal Platform
