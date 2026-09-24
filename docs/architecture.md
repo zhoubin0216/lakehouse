@@ -18,6 +18,9 @@ flowchart LR
     NormalMerge --> Validation
     IntegratedMerge --> Validation
     Validation --> Summary["Validation rule summary"]
+    Evaluation["Task 5 isolated evaluation"] -. measures .-> Updates
+    Evaluation -. measures .-> Products
+    Evaluation -. measures .-> Validation
 ```
 
 The Week 1 manual full-build commands remain available. Week 3 updates use the

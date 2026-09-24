@@ -360,6 +360,18 @@ def record_incremental_attempt(
                 "affected_dates": state.get("affected_dates", []),
                 "products_done": state.get("products_done", []),
                 "products_skipped": state.get("products_skipped", []),
+                "integration_refresh_seconds": state.get(
+                    "integration_refresh_seconds"
+                ),
+                "aggregate_refresh_seconds": state.get(
+                    "aggregate_refresh_seconds"
+                ),
+                "product_refresh_seconds": state.get(
+                    "product_refresh_seconds", {}
+                ),
+                "analytical_refresh_seconds": state.get(
+                    "analytical_refresh_seconds"
+                ),
             }
         ),
     }

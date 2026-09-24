@@ -211,6 +211,55 @@ editing the classification, quarantine, or reporting engine.
 Implementation details and the generic-versus-specific design discussion:
 [docs/week3_task4_validation.md](docs/week3_task4_validation.md).
 
+## Week 3: Production-Readiness Evaluation (Task 5)
+
+Task 5 provides a controlled, reproducible evaluation suite for the Week 3
+platform. It measures duplicate-aware incremental insertion, scoped refresh of
+all four analytical products, validation overhead, monitoring overhead, and the
+physical storage occupied by core and supporting platform components.
+
+Run the configured experiment:
+
+```bash
+python -m src.evaluation
+```
+
+For a quicker smoke run or a Git-visible report:
+
+```bash
+python -m src.evaluation \
+  --rows 2000 \
+  --repeats 2 \
+  --export-report docs/benchmarks/week3/production_readiness.md
+```
+
+Each execution creates a unique directory under `data/evaluation/week3/` with:
+
+```text
+measurements.json       Full measurements and environment metadata
+measurements.csv        Compact timing table
+evaluation_report.md    Short evaluation report and maintainability discussion
+artifacts/              Isolated Delta inputs, outputs, quarantine and monitoring data
+```
+
+The synthetic experiment never modifies the configured municipality tables.
+It provides repeatable component measurements on any machine. The incremental
+release pipeline also persists real `integration_refresh_seconds`,
+`aggregate_refresh_seconds`, per-product refresh durations, and total
+`analytical_refresh_seconds` in release state. When a completed release exists,
+the evaluation report includes those real workload timings alongside the
+controlled experiment.
+
+Storage figures are filesystem bytes, including Delta logs and retained table
+history. Validation overhead compares the same accepted/rejected split with
+zero rules and with three representative rules. Monitoring overhead compares
+the same cached Spark aggregation with monitoring disabled and with one Delta
+metadata append. Results are warmed local measurements, not claims about
+cluster-scale throughput or statistical significance.
+
+Methodology and design discussion:
+[docs/week3_task5_evaluation.md](docs/week3_task5_evaluation.md).
+
 ## Week 1: Data Platform
 
 ### Minimal Platform
@@ -235,6 +284,7 @@ src/data_cleaning/      raw -> normal Delta tables
 src/data_integration/   normal -> integrated_taxi_trips
 src/data_aggregation/   integrated -> summary tables
 src/data_analysis/      Week 2 query, optimization, product, and report modules
+src/evaluation/         Week 3 production-readiness measurements and report
   sql/                  Six reusable Spark SQL query files
   query_library.py      Ordered query registry
   query_benchmark.py    Default-configuration baseline measurements

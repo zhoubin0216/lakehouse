@@ -601,13 +601,24 @@ def _apply_release(spark, config, manifest_path, manifest, root):
                 )
 
                 checkpoint()
+        integration_started = time.perf_counter()
         scope = integrate_changes(spark, config, directory, state, checkpoint)
+        state["integration_refresh_seconds"] = (
+            state.get("integration_refresh_seconds", 0.0)
+            + time.perf_counter()
+            - integration_started
+        )
+        checkpoint()
         if state["integrated_changed"]:
             months = [tuple(r) for r in scope.select("pickup_year", "pickup_month").distinct().collect()]
             dates = [str(r.pickup_date) for r in scope.select("pickup_date").distinct().collect()]
             state["affected_months"], state["affected_dates"] = months, dates
             if not state.get("aggregate_done"):
+                aggregate_started = time.perf_counter()
                 refresh_aggregates(spark, config, scope)
+                state["aggregate_refresh_seconds"] = (
+                    time.perf_counter() - aggregate_started
+                )
                 state["aggregate_done"] = True
                 checkpoint()
             for name in config["data_analysis"]["products"]["definitions"]:
@@ -621,12 +632,21 @@ def _apply_release(spark, config, manifest_path, manifest, root):
                         predicate = month_predicate(product_months)
                         if name == "daily_mobility_summary":
                             predicate = f"({predicate}) AND {values_predicate('pickup_date', product_dates)}"
+                        product_started = time.perf_counter()
                         build_data_products(spark, config, name, scope_predicate=predicate,
                                             source_version=state["integrated_version"])
+                        state.setdefault("product_refresh_seconds", {})[name] = (
+                            time.perf_counter() - product_started
+                        )
                     else:
                         state.setdefault("products_skipped", []).append(name)
+                        state.setdefault("product_refresh_seconds", {})[name] = 0.0
                     state["products_done"].append(name)
                     checkpoint()
+        state["analytical_refresh_seconds"] = (
+            state.get("aggregate_refresh_seconds", 0.0)
+            + sum(state.get("product_refresh_seconds", {}).values())
+        )
         state["status"] = "complete"
         state["last_attempt_seconds"] = time.perf_counter() - started
         state.pop("error", None)

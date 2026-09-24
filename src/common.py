@@ -90,6 +90,26 @@ def validate_config(config: dict) -> None:
 
     validate_data_products_config(config)
     validate_monitoring_config(config)
+    validate_evaluation_config(config)
+
+
+def validate_evaluation_config(config: dict) -> None:
+    """Validate optional Week 3 production-evaluation settings."""
+    evaluation = config.get("evaluation")
+    if evaluation is None:
+        return
+    if not isinstance(evaluation, dict):
+        raise ValueError("evaluation must be a YAML mapping")
+    root = evaluation.get("results_root")
+    if not isinstance(root, str) or not root.strip():
+        raise ValueError("evaluation.results_root must be a non-empty path")
+    rows = evaluation.get("synthetic_rows")
+    if isinstance(rows, bool) or not isinstance(rows, int) or rows < 100:
+        raise ValueError("evaluation.synthetic_rows must be an integer of at least 100")
+    repeats = evaluation.get("repeats")
+    if isinstance(repeats, bool) or not isinstance(repeats, int) or repeats < 1:
+        raise ValueError("evaluation.repeats must be a positive integer")
+
 
 def validate_monitoring_config(config: dict) -> None:
     """Validate optional Week 3 monitoring configuration."""
