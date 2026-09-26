@@ -262,6 +262,8 @@ Methodology and design discussion:
 
 Measured local example:
 [docs/benchmarks/week3/production_readiness.md](docs/benchmarks/week3/production_readiness.md).
+The completed real-release counts and timings are summarized in
+[docs/benchmarks/week3/release2_evidence.md](docs/benchmarks/week3/release2_evidence.md).
 
 ## Week 1: Data Platform
 
