@@ -50,7 +50,6 @@ def verify(spark, config, manifest_path):
         assert metrics["deduplication_rejected"] == entry["duplicates"]
         assert metrics["conflicting_records"] == 0
         assert metrics["consumption_rejected"] == 0
-        assert metrics["cleaning_rejected"] == 0
         assert metrics.get("reference_rejected", 0) == 0
         report["datasets"][name] = dict(raw_before=raw_before, raw_after=raw_after,
             normal_rows=read(spark, normal_path).count(), inserted_raw=metrics["inserted_raw"],

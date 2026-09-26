@@ -33,6 +33,10 @@ Every rejected row retains the source columns plus:
 
 A row can fail several rules. It is stored once with aligned arrays, so the
 report can count individual rule failures without losing the original row.
+The release verifier permits cleaning-stage rejects because isolating invalid
+rows while valid rows continue is the Task 4 contract. It still fails on source
+parse errors, conflicting revisions, missing required references, count
+mismatches, or analytical inconsistencies.
 
 ## Checks implemented
 
