@@ -318,6 +318,8 @@ def record_incremental_attempt(
             _sum_present(
                 progress.get("consumption_rejected"),
                 progress.get("cleaning_rejected"),
+                progress.get("conflicting_records"),
+                progress.get("reference_rejected"),
             )
             for _, progress in metric_items
         ]
@@ -358,6 +360,18 @@ def record_incremental_attempt(
                 "affected_dates": state.get("affected_dates", []),
                 "products_done": state.get("products_done", []),
                 "products_skipped": state.get("products_skipped", []),
+                "integration_refresh_seconds": state.get(
+                    "integration_refresh_seconds"
+                ),
+                "aggregate_refresh_seconds": state.get(
+                    "aggregate_refresh_seconds"
+                ),
+                "product_refresh_seconds": state.get(
+                    "product_refresh_seconds", {}
+                ),
+                "analytical_refresh_seconds": state.get(
+                    "analytical_refresh_seconds"
+                ),
             }
         ),
     }
@@ -386,12 +400,21 @@ def record_incremental_attempt(
 
         consumption_rejected = progress.get("consumption_rejected")
         cleaning_rejected = progress.get("cleaning_rejected")
-        rejected = _sum_present(consumption_rejected, cleaning_rejected)
+        conflicting_records = progress.get("conflicting_records")
+        reference_rejected = progress.get("reference_rejected")
+        rejected = _sum_present(
+            consumption_rejected,
+            cleaning_rejected,
+            conflicting_records,
+            reference_rejected,
+        )
         validation_failures = progress.get("validation_failures")
         if validation_failures is None:
             validation_failures = _sum_present(
                 progress.get("consumption_validation_failures"),
                 progress.get("cleaning_validation_failures"),
+                progress.get("deduplication_validation_failures"),
+                progress.get("reference_validation_failures"),
             )
 
         child_error = error if dataset_status == "FAILED" else None
@@ -446,11 +469,22 @@ def record_incremental_attempt(
                         "normal_changed": progress.get("normal_changed"),
                         "consumption_rejected": consumption_rejected,
                         "cleaning_rejected": cleaning_rejected,
+                        "deduplication_rejected": progress.get(
+                            "deduplication_rejected"
+                        ),
+                        "conflicting_records": conflicting_records,
+                        "reference_rejected": reference_rejected,
                         "consumption_validation_failures": progress.get(
                             "consumption_validation_failures"
                         ),
                         "cleaning_validation_failures": progress.get(
                             "cleaning_validation_failures"
+                        ),
+                        "deduplication_validation_failures": progress.get(
+                            "deduplication_validation_failures"
+                        ),
+                        "reference_validation_failures": progress.get(
+                            "reference_validation_failures"
                         ),
                     }
                 ),

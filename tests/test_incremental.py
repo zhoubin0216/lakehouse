@@ -7,7 +7,7 @@ from pyspark.sql import functions as F
 
 from src.common import load_config, table_path, write_delta
 from src.data_analysis.data_products import PRODUCT_BUILDERS, build_data_products
-from src.incremental.pipeline import novel_records, validate_manifest
+from src.incremental.pipeline import novel_records, split_novel_records, validate_manifest
 from src.incremental.refresh import affected_product_rows
 from src.incremental.storage import (
     changed_rows, digest, fit_legacy_raw, merge_rows, read, replace_scope, save_json, version,
@@ -29,8 +29,18 @@ def test_novel_records_ignore_duplicates_allow_corrections_and_reversions(spark)
     # A later v1 record can legitimately revert an earlier value.
     reverted = initial.withColumn("_ingestion_timestamp", F.lit(datetime(2024, 3, 1)))
     assert novel_records(reverted, initial.unionByName(corrected), "weather_hourly").count() == 1
-    with pytest.raises(ValueError, match="conflicting revisions"):
-        novel_records(initial.unionByName(corrected), initial, "weather_hourly")
+    novel, rejected = split_novel_records(
+        initial.unionByName(corrected),
+        initial,
+        "weather_hourly",
+    )
+    assert novel.count() == 0
+    assert rejected.count() == 2
+    assert {
+        rule_id
+        for row in rejected.select("_validation_rule_ids").collect()
+        for rule_id in row._validation_rule_ids
+    } == {"duplicate.conflicting_revision"}
 
 
 def test_null_safe_record_identity_and_schema_additions(spark):

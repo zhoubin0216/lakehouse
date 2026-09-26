@@ -47,11 +47,19 @@ def verify(spark, config, manifest_path):
         assert raw_after == raw_before + metrics["inserted_raw"]
         assert metrics["inserted_raw"] == entry["new_records"]
         assert metrics["ignored_duplicates"] == entry["duplicates"]
-        assert metrics["consumption_rejected"] == 0 and metrics["cleaning_rejected"] == 0
+        assert metrics["deduplication_rejected"] == entry["duplicates"]
+        assert metrics["conflicting_records"] == 0
+        assert metrics["consumption_rejected"] == 0
+        assert metrics.get("reference_rejected", 0) == 0
         report["datasets"][name] = dict(raw_before=raw_before, raw_after=raw_after,
             normal_rows=read(spark, normal_path).count(), inserted_raw=metrics["inserted_raw"],
             ignored_duplicates=metrics["ignored_duplicates"],
-            rejected=metrics["consumption_rejected"] + metrics["cleaning_rejected"])
+            rejected=(
+                metrics["consumption_rejected"]
+                + metrics["cleaning_rejected"]
+                + metrics["conflicting_records"]
+                + metrics.get("reference_rejected", 0)
+            ))
     integrated_path = table_path(config, config["data_integration"]["integrated_taxi_trips_table"])
     integrated = read(spark, integrated_path)
     paths.append(integrated_path)

@@ -18,8 +18,18 @@ from src.data_cleaning.normal_tables import (
     latest_schema_records,
     normalize_air_times,
 )
-from src.data_integration.integrated_tables import integrate_taxi_trips
-from src.data_quality import rejected_table_path
+from src.data_integration.integrated_tables import (
+    integrate_taxi_trips,
+    validate_taxi_zone_references,
+)
+from src.data_quality import (
+    SchemaContractError,
+    ValidationRule,
+    combine_rejections,
+    reject_all,
+    rejected_table_path,
+    split_duplicate_records,
+)
 from src.data_analysis.data_products import build_data_products
 from src.incremental.storage import (
     align, changed_rows, digest, fit_legacy_raw, merge_rows, month_predicate, read,
@@ -46,24 +56,60 @@ CLEANERS = {"taxi_zone_lookup": clean_taxi_zones_with_rejections,
             "air_quality": clean_air_quality_with_rejections}
 
 
-def novel_records(incoming, previous, dataset):
-    """Ignore exact retries, but retain a new revision of a stable business key."""
+def split_novel_records(incoming, previous, dataset):
+    """Return novel rows plus quarantined duplicates/conflicting revisions."""
     keys = RAW_KEYS[dataset]
     if dataset == "air_quality":
         incoming, previous = normalize_air_times(incoming), normalize_air_times(previous)
     fields = sorted(c for c in incoming.columns if not c.startswith("_"))
     incoming = incoming.withColumn("_content_hash", F.sha2(F.to_json(
-        F.struct(*fields), options={"ignoreNullFields": "false"}), 256)).dropDuplicates(["_content_hash"])
+        F.struct(*fields), options={"ignoreNullFields": "false"}), 256))
+    incoming, repeated = split_duplicate_records(incoming, ["_content_hash"])
+
+    conflicts = repeated.limit(0)
     if dataset != "yellow_taxi_trips":
-        if incoming.groupBy(*keys).count().filter("count > 1").limit(1).count():
-            raise ValueError(f"{dataset}: conflicting revisions for a key in the same release")
+        conflict_keys = (
+            incoming.groupBy(*keys)
+            .agg(F.countDistinct("_content_hash").alias("_revision_count"))
+            .filter("_revision_count > 1")
+            .select(*keys)
+        )
+        conflicts = reject_all(
+            incoming.join(conflict_keys, keys, "left_semi"),
+            "deduplication",
+            ValidationRule(
+                "duplicate.conflicting_revision",
+                "conflicting revisions for a business key in the same release",
+                "conflict",
+                lambda _df: F.lit(True),
+            ),
+        )
+        incoming = incoming.join(conflict_keys, keys, "left_anti")
     previous = previous.join(incoming.select(*keys).distinct(), keys, "left_semi")
     if dataset != "yellow_taxi_trips":
         previous = latest_schema_records(previous, keys)
     previous = align(previous, incoming.schema).withColumn("_content_hash", F.sha2(F.to_json(
         F.struct(*[F.col(c).cast(incoming.schema[c].dataType).alias(c) for c in fields]),
         options={"ignoreNullFields": "false"}), 256))
-    return incoming.join(previous.select("_content_hash").distinct(), "_content_hash", "left_anti")
+    previous_hashes = previous.select("_content_hash").distinct()
+    existing = reject_all(
+        incoming.join(previous_hashes, "_content_hash", "left_semi"),
+        "deduplication",
+        ValidationRule(
+            "duplicate.existing_record",
+            "duplicate record already exists in the raw table",
+            "duplicate",
+            lambda _df: F.lit(True),
+        ),
+    )
+    novel = incoming.join(previous_hashes, "_content_hash", "left_anti")
+    rejected = combine_rejections(repeated, conflicts, existing)
+    return novel.drop("_content_hash"), rejected.drop("_content_hash")
+
+
+def novel_records(incoming, previous, dataset):
+    """Backward-compatible view returning only accepted novel records."""
+    return split_novel_records(incoming, previous, dataset)[0]
 
 
 def validate_manifest(path, config):
@@ -77,7 +123,17 @@ def validate_manifest(path, config):
         if name in seen:
             raise ValueError("One file per dataset is required in a release")
         seen.add(name)
-        resolve_schema_definition(name, config["datasets"][name], entry["schema_version"])
+        try:
+            resolve_schema_definition(name, config["datasets"][name], entry["schema_version"])
+        except (KeyError, ValueError) as error:
+            raise SchemaContractError(
+                f"{name}: unsupported schema version {entry['schema_version']}",
+                details={
+                    "change_type": "UNSUPPORTED_SCHEMA_VERSION",
+                    "dataset": name,
+                    "schema_version": entry["schema_version"],
+                },
+            ) from error
         source = (path.parent / entry["file"]).resolve()
         if not source.is_relative_to(path.parent) or not source.is_file():
             raise ValueError(f"Invalid release file: {source}")
@@ -196,7 +252,25 @@ def process_source(spark, config, manifest_path, entry, directory, state, checkp
             raise ValueError(
                 f"{name}: parsed count does not match the release manifest"
             )
-        novel_records(accepted, previous, name).write.format("delta").mode("overwrite").save(str(staged))
+        novel, deduplication_rejected = split_novel_records(
+            accepted,
+            previous,
+            name,
+        )
+        deduplication_metrics = save_rejections(
+            deduplication_rejected,
+            config,
+            name,
+            "deduplication",
+            release,
+        )
+        duplicate_count = deduplication_rejected.filter(
+            F.array_contains("_validation_categories", "duplicate")
+        ).count()
+        conflict_count = deduplication_rejected.filter(
+            F.array_contains("_validation_categories", "conflict")
+        ).count()
+        novel.write.format("delta").mode("overwrite").save(str(staged))
         count = read(spark, staged).count()
         progress.update(
             staged=True,
@@ -209,8 +283,15 @@ def process_source(spark, config, manifest_path, entry, directory, state, checkp
 
             inserted_raw=count,
 
-            ignored_duplicates=
-            input_count - count,
+            ignored_duplicates=duplicate_count,
+
+            conflicting_records=conflict_count,
+
+            deduplication_rejected=deduplication_metrics["rejected_records"],
+
+            deduplication_validation_failures=deduplication_metrics[
+                "validation_failures"
+            ],
 
             consumption_rejected=
             rejection_metrics[
@@ -241,9 +322,9 @@ def process_source(spark, config, manifest_path, entry, directory, state, checkp
             normal_changed=0,
             cleaning_rejected=0,
             cleaning_validation_failures=0,
-            validation_failures=progress.get(
-                "consumption_validation_failures",
-                0,
+            validation_failures=(
+                progress.get("consumption_validation_failures", 0)
+                + progress.get("deduplication_validation_failures", 0)
             ),
             normal_staged=True,
             normal_done=True,
@@ -294,6 +375,11 @@ def process_source(spark, config, manifest_path, entry, directory, state, checkp
                     "cleaning_validation_failures",
                     0,
                 )
+                +
+                progress.get(
+                    "deduplication_validation_failures",
+                    0,
+                )
         )
         progress["normal_staged"] = True
         checkpoint()
@@ -330,9 +416,43 @@ def integrate_changes(spark, config, directory, state, checkpoint):
                     change.select(F.col("event_hour").alias("pickup_hour")), "pickup_hour", "left_semi")
             affected = affected.unionByName(selected, allowMissingColumns=True)
         taxi = affected.dropDuplicates(["trip_id"])
-        candidate = integrate_taxi_trips(taxi, normal["taxi_zone_lookup"], normal["weather_hourly"], normal["air_quality"])
+        taxi, reference_rejected = validate_taxi_zone_references(
+            taxi,
+            normal["taxi_zone_lookup"],
+        )
+        reference_metrics = save_rejections(
+            reference_rejected,
+            config,
+            "yellow_taxi_trips",
+            "reference",
+            state.get("release_id", "incremental"),
+        )
+        if "yellow_taxi_trips" in state["datasets"]:
+            taxi_progress = state["datasets"]["yellow_taxi_trips"]
+            taxi_progress["reference_rejected"] = reference_metrics[
+                "rejected_records"
+            ]
+            taxi_progress["reference_validation_failures"] = reference_metrics[
+                "validation_failures"
+            ]
+            taxi_progress["validation_failures"] = (
+                taxi_progress.get("validation_failures", 0)
+                + reference_metrics["validation_failures"]
+            )
+        else:
+            state["reference_rejected"] = reference_metrics["rejected_records"]
+            state["reference_validation_failures"] = reference_metrics[
+                "validation_failures"
+            ]
+        candidate = integrate_taxi_trips(
+            taxi,
+            normal["taxi_zone_lookup"],
+            normal["weather_hourly"],
+            normal["air_quality"],
+        )
         months = [tuple(r) for r in taxi.select("pickup_year", "pickup_month").distinct().collect()]
-        previous = read(spark, target, state["base_integrated"]).filter(month_predicate(months))
+        previous = read(spark, target, state["base_integrated"])
+        previous = previous.filter(month_predicate(months)) if months else previous.limit(0)
         changed_rows(candidate, previous, ["trip_id"]).write.format("delta").mode("overwrite").save(str(staged))
         changes = read(spark, staged)
         previous.join(changes.select("trip_id"), "trip_id", "left_semi").write.format("delta").mode("overwrite").save(str(old_stage))
@@ -481,13 +601,24 @@ def _apply_release(spark, config, manifest_path, manifest, root):
                 )
 
                 checkpoint()
+        integration_started = time.perf_counter()
         scope = integrate_changes(spark, config, directory, state, checkpoint)
+        state["integration_refresh_seconds"] = (
+            state.get("integration_refresh_seconds", 0.0)
+            + time.perf_counter()
+            - integration_started
+        )
+        checkpoint()
         if state["integrated_changed"]:
             months = [tuple(r) for r in scope.select("pickup_year", "pickup_month").distinct().collect()]
             dates = [str(r.pickup_date) for r in scope.select("pickup_date").distinct().collect()]
             state["affected_months"], state["affected_dates"] = months, dates
             if not state.get("aggregate_done"):
+                aggregate_started = time.perf_counter()
                 refresh_aggregates(spark, config, scope)
+                state["aggregate_refresh_seconds"] = (
+                    time.perf_counter() - aggregate_started
+                )
                 state["aggregate_done"] = True
                 checkpoint()
             for name in config["data_analysis"]["products"]["definitions"]:
@@ -501,12 +632,21 @@ def _apply_release(spark, config, manifest_path, manifest, root):
                         predicate = month_predicate(product_months)
                         if name == "daily_mobility_summary":
                             predicate = f"({predicate}) AND {values_predicate('pickup_date', product_dates)}"
+                        product_started = time.perf_counter()
                         build_data_products(spark, config, name, scope_predicate=predicate,
                                             source_version=state["integrated_version"])
+                        state.setdefault("product_refresh_seconds", {})[name] = (
+                            time.perf_counter() - product_started
+                        )
                     else:
                         state.setdefault("products_skipped", []).append(name)
+                        state.setdefault("product_refresh_seconds", {})[name] = 0.0
                     state["products_done"].append(name)
                     checkpoint()
+        state["analytical_refresh_seconds"] = (
+            state.get("aggregate_refresh_seconds", 0.0)
+            + sum(state.get("product_refresh_seconds", {}).values())
+        )
         state["status"] = "complete"
         state["last_attempt_seconds"] = time.perf_counter() - started
         state.pop("error", None)

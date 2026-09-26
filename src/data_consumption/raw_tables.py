@@ -5,7 +5,12 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from src.common import resolve_schema_definition, table_path, write_delta
-from src.data_quality import classify_records, write_rejected_records
+from src.data_quality import (
+    SchemaContractError,
+    classify_records,
+    split_duplicate_records,
+    write_rejected_records,
+)
 from src.data_consumption.metadata import (
     mark_ingestion_failure,
     mark_ingestion_success,
@@ -71,16 +76,33 @@ def consume_dataset(
             config,
             run["run_id"],
         )
+        duplicate_df = None
         if should_deduplicate_records(config):
-            raw_df = deduplicate_records(raw_df)
+            raw_df, duplicate_df = split_duplicate_records(
+                raw_df,
+                ["_record_hash"],
+            )
         processed_records = write_raw_delta(raw_df, dataset_config, config)
-        rejected_records = write_rejected_records(
+        write_mode = "overwrite" if is_sample_run(config) else "append"
+        consumption_rejected = write_rejected_records(
             rejected_df,
             config,
             stage="consumption",
             dataset_name=dataset_name,
-            mode="overwrite" if is_sample_run(config) else "append",
+            mode=write_mode,
         )
+        duplicate_rejected = (
+            write_rejected_records(
+                duplicate_df,
+                config,
+                stage="deduplication",
+                dataset_name=dataset_name,
+                mode=write_mode,
+            )
+            if duplicate_df is not None
+            else 0
+        )
+        rejected_records = consumption_rejected + duplicate_rejected
 
         if is_sample_run(config):
             print(f"{dataset_name}: sample run, source registry not updated")
@@ -226,7 +248,8 @@ def add_lineage_columns(
 
 def deduplicate_records(df: DataFrame) -> DataFrame:
     """Use _record_hash or business keys to avoid duplicate raw records."""
-    return df.dropDuplicates(["_record_hash"])
+    accepted, _ = split_duplicate_records(df, ["_record_hash"])
+    return accepted
 
 
 def write_raw_delta(df, dataset_config: dict, config: dict) -> int:
@@ -257,9 +280,14 @@ def validate_source_columns(df: DataFrame, schema_definition: dict) -> None:
     missing_columns = sorted(expected_columns - actual_columns)
     unexpected_columns = sorted(actual_columns - expected_columns)
     if missing_columns or unexpected_columns:
-        raise ValueError(
+        raise SchemaContractError(
             "Source columns do not match the schema contract; "
-            f"missing={missing_columns}, unexpected={unexpected_columns}"
+            f"missing={missing_columns}, unexpected={unexpected_columns}",
+            details={
+                "change_type": "UNSUPPORTED_COLUMNS",
+                "missing_columns": missing_columns,
+                "unexpected_columns": unexpected_columns,
+            },
         )
 
 
@@ -308,8 +336,12 @@ def validate_parquet_column_types(df: DataFrame, schema_definition: dict) -> Non
         if actual_types[column] != expected_types[column]
     }
     if mismatches:
-        raise ValueError(
-            f"Parquet column types do not match the schema contract: {mismatches}"
+        raise SchemaContractError(
+            f"Parquet column types do not match the schema contract: {mismatches}",
+            details={
+                "change_type": "UNSUPPORTED_TYPE_CHANGE",
+                "type_mismatches": mismatches,
+            },
         )
 
 

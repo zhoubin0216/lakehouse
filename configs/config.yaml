@@ -14,6 +14,7 @@ data_consumption:
 
 data_quality:
   rejected_table_root: rejected
+  validation_summary_table: validation/rule_summary
 
 incremental:
   releases_root: data/raw/updates
@@ -28,6 +29,11 @@ monitoring:
 
   pipeline_runs_table: monitoring/pipeline_runs
   schema_events_table: monitoring/schema_events
+
+evaluation:
+  results_root: data/evaluation/week3
+  synthetic_rows: 10000
+  repeats: 3
 
 data_integration:
   integrated_taxi_trips_table: integrated/integrated_taxi_trips

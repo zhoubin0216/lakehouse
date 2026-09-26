@@ -294,17 +294,21 @@ def test_taxi_trip_cleaning_filters_flags_and_deduplicates(
     assert set(rows) == {
         "valid-trip",
         "financial-adjustment",
-        "invalid-distance",
     }
     assert rows["valid-trip"].trip_duration_minutes == 10.0
     assert rows["valid-trip"].pickup_hour == datetime(2024, 1, 2, 12)
     assert rows["valid-trip"].source_schema_version == 2
     assert rows["financial-adjustment"].is_zero_distance is True
     assert rows["financial-adjustment"].is_financial_adjustment is True
-    assert rows["invalid-distance"].has_invalid_distance is True
-    assert rows["invalid-distance"].trip_distance is None
     rejected_rows = {row.trip_id: row for row in rejected.collect()}
-    assert set(rejected_rows) == {"invalid-duration", "outside-project-period"}
+    assert set(rejected_rows) == {
+        "invalid-distance",
+        "invalid-duration",
+        "outside-project-period",
+    }
+    assert rejected_rows["invalid-distance"]._rejection_reasons == [
+        "trip distance is outside the allowed range"
+    ]
     assert rejected_rows["invalid-duration"]._rejection_reasons == [
         "trip duration is outside the allowed range"
     ]

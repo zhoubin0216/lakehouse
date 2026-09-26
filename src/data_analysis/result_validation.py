@@ -16,6 +16,22 @@ import math
 from pyspark.sql.types import DoubleType, FloatType, StructType
 
 
+def data_type_signature(data_type):
+    """Return a type signature without nullability or metadata annotations."""
+    def normalize(value):
+        if isinstance(value, dict):
+            return {
+                key: normalize(item)
+                for key, item in value.items()
+                if key not in {"nullable", "containsNull", "valueContainsNull", "metadata"}
+            }
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        return value
+
+    return json.dumps(normalize(data_type.jsonValue()), sort_keys=True, separators=(",", ":"))
+
+
 def canonical_value(value):
     if value is None:
         return ["null"]
@@ -60,7 +76,7 @@ class ResultSnapshot:
             raise ValueError("Analytical result exceeds max_result_rows; use a distributed validator")
         # Ignore nullability/metadata, which physical rewrites may alter, but
         # require identical ordered names and Spark SQL data types.
-        signature = [(f.name, f.dataType.json()) for f in schema.fields]
+        signature = [(f.name, data_type_signature(f.dataType)) for f in schema.fields]
         payload = json.dumps([signature, sorted(row_token(row) for row in values)])
         return cls(schema, values, hashlib.sha256(payload.encode()).hexdigest())
 
@@ -112,7 +128,7 @@ def _has_perfect_matching(left, right, compatible):
 def compare_results(expected, actual, *, atol=1e-8, rtol=1e-6):
     if not math.isfinite(atol) or not math.isfinite(rtol) or atol < 0 or rtol < 0:
         raise ValueError("Tolerances must be finite and non-negative")
-    signature = lambda s: [(f.name, f.dataType.json()) for f in s.fields]
+    signature = lambda s: [(f.name, data_type_signature(f.dataType)) for f in s.fields]
     schema_equal = signature(expected.schema) == signature(actual.schema)
     count_equal = len(expected.rows) == len(actual.rows)
     exact = schema_equal and expected.content_hash == actual.content_hash

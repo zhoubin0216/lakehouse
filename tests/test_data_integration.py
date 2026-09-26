@@ -2,7 +2,33 @@ from datetime import datetime
 
 from pyspark.sql import SparkSession
 
-from src.data_integration.integrated_tables import integrate_taxi_trips
+from src.data_integration.integrated_tables import (
+    integrate_taxi_trips,
+    validate_taxi_zone_references,
+)
+
+
+def test_missing_taxi_zone_references_are_quarantined(
+    spark: SparkSession,
+) -> None:
+    trips = spark.createDataFrame(
+        [("valid", 1, 2), ("bad-pickup", 99, 2), ("bad-both", 98, 97)],
+        "trip_id string, pickup_location_id int, dropoff_location_id int",
+    )
+    zones = spark.createDataFrame([(1,), (2,)], "location_id int")
+
+    accepted, rejected = validate_taxi_zone_references(trips, zones)
+
+    assert [row.trip_id for row in accepted.collect()] == ["valid"]
+    rejected_rows = {row.trip_id: row for row in rejected.collect()}
+    assert set(rejected_rows) == {"bad-pickup", "bad-both"}
+    assert rejected_rows["bad-pickup"]._validation_rule_ids == [
+        "reference.pickup_location_id"
+    ]
+    assert set(rejected_rows["bad-both"]._validation_rule_ids) == {
+        "reference.pickup_location_id",
+        "reference.dropoff_location_id",
+    }
 
 
 def test_integration_preserves_unmatched_taxi_trips(

@@ -12,6 +12,23 @@ def test_config_loads() -> None:
     assert config["datasets"]["air_quality"]["current_schema_version"] == 2
     assert all("1" in dataset["schema_versions"] for dataset in config["datasets"].values())
     assert len(config["data_analysis"]["products"]["definitions"]) == 4
+    assert config["evaluation"]["synthetic_rows"] >= 100
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("results_root", "", "results_root"),
+        ("synthetic_rows", 99, "synthetic_rows"),
+        ("repeats", 0, "repeats"),
+    ],
+)
+def test_config_rejects_invalid_evaluation_settings(key, value, message) -> None:
+    config = load_config()
+    config["evaluation"][key] = value
+
+    with pytest.raises(ValueError, match=message):
+        validate_config(config)
 
 
 def test_config_rejects_missing_required_analytical_product() -> None:
