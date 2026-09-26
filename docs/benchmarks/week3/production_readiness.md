@@ -10,20 +10,21 @@ The synthetic experiment makes component overhead reproducible and avoids rewrit
 
 | Measurement | Result | Scope |
 |---|---:|---|
-| Incremental update median | 2.8083 s | 1,100 incoming; 1,000 inserted; 100 quarantined duplicates |
-| Analytical refresh median | 2.9014 s | Four products over 5,000 affected rows |
-| Validation overhead | 0.0395 s (124.3%) | Three rules over 10,000 rows |
-| Monitoring overhead | 0.5341 s (2760.8%) | One Delta metadata append per operation |
-| Latest real release | not available | Run an incremental release, then rerun this suite |
+| Incremental update median | 2.5711 s | 1,100 incoming; 1,000 inserted; 100 quarantined duplicates |
+| Analytical refresh median | 2.8496 s | Four products over 5,000 affected rows |
+| Validation overhead | 0.0296 s (96.4%) | Three rules over 10,000 rows |
+| Monitoring overhead | 0.5031 s (2768.6%) | One Delta metadata append per operation |
+| Latest real release update | 187.8235 s | Release `week3_release2`; status `complete` |
+| Latest real analytical refresh | 22.3377 s | Aggregate plus affected-product refresh |
 
 Per-product scoped refresh medians:
 
 | Product | Median seconds | Output rows |
 |---|---:|---:|
-| `daily_mobility_summary` | 0.7937 | 1 |
-| `taxi_zone_statistics` | 0.7199 | 10 |
-| `weather_impact_summary` | 0.7283 | 5 |
-| `air_quality_impact_summary` | 0.6792 | 3 |
+| `daily_mobility_summary` | 0.8330 | 1 |
+| `taxi_zone_statistics` | 0.6785 | 10 |
+| `weather_impact_summary` | 0.6737 | 5 |
+| `air_quality_impact_summary` | 0.6516 | 3 |
 
 ## Storage overhead
 
@@ -31,13 +32,13 @@ Physical bytes include active data, retained Delta history, and transaction logs
 
 | Category | Bytes | Files |
 |---|---:|---:|
-| core tables | 6,043,997,226 | 526 |
-| analytical products | 316,772 | 60 |
-| validation | 397,047 | 30 |
-| monitoring | 0 | 0 |
-| metadata and update state | 6,044 | 16 |
+| core tables | 6,210,694,787 | 596 |
+| analytical products | 746,673 | 152 |
+| validation | 13,923,284 | 64 |
+| monitoring | 199,648 | 58 |
+| metadata and update state | 233,531,047 | 117 |
 
-Supporting tables, products, and metadata occupy **719,863 bytes**, or **0.012%** of the configured core-table footprint at measurement time.
+Supporting tables, products, and metadata occupy **248,400,652 bytes**, or **4.000%** of the configured core-table footprint at measurement time.
 
 ## Production-readiness assessment
 
