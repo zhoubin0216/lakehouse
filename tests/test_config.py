@@ -13,6 +13,25 @@ def test_config_loads() -> None:
     assert all("1" in dataset["schema_versions"] for dataset in config["datasets"].values())
     assert len(config["data_analysis"]["products"]["definitions"]) == 4
     assert config["evaluation"]["synthetic_rows"] >= 100
+    assert config["machine_learning"]["prediction_task"] == "hourly_taxi_demand"
+
+
+def test_config_rejects_non_chronological_ml_boundaries() -> None:
+    config = load_config()
+    config["machine_learning"]["train_end_exclusive"] = "2024-04-02 00:00:00"
+
+    with pytest.raises(ValueError, match="time boundaries"):
+        validate_config(config)
+
+
+def test_config_rejects_overlapping_ml_feature_types() -> None:
+    config = load_config()
+    config["machine_learning"]["numerical_features"].append(
+        config["machine_learning"]["categorical_features"][0]
+    )
+
+    with pytest.raises(ValueError, match="must not overlap"):
+        validate_config(config)
 
 
 @pytest.mark.parametrize(

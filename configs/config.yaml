@@ -44,6 +44,53 @@ data_aggregation:
   avg_trip_duration_per_day_table: aggregate/avg_trip_duration_per_day
   avg_fare_per_borough_table: aggregate/avg_fare_per_borough
 
+machine_learning:
+  prediction_task: hourly_taxi_demand
+  source_table: integrated/integrated_taxi_trips
+  training_dataset_table: ml/hourly_taxi_demand
+  prepared_dataset_table: ml/hourly_taxi_demand_prepared
+  feature_pipeline_model_path: ml/models/hourly_taxi_demand_features
+  label_column: demand
+  features_column: features
+  output_partitions: [split]
+
+  categorical_features:
+    - pickup_location_id
+    - pickup_borough
+    - pickup_service_zone
+    - hour_of_day
+    - day_of_week
+    - month
+    - weather_condition_code
+
+  numerical_features:
+    - temperature_c
+    - relative_humidity_pct
+    - precipitation_mm
+    - wind_direction_deg
+    - wind_speed_kmh
+    - pressure_hpa
+    - cloud_cover_pct
+    - pm25_avg_ug_m3
+    - pm25_min_ug_m3
+    - pm25_max_ug_m3
+    - air_quality_observation_count
+    - air_quality_site_count
+    - is_weekend
+    - weather_available_flag
+    - air_quality_available_flag
+
+  output_metadata_columns:
+    - pickup_hour
+    - pickup_location_id
+
+  # The Week 3 2025 release is a synthetic incremental-update fixture. Keep
+  # the first reproducible ML experiment on the continuous Q1 2024 period.
+  observation_start: "2024-01-01 00:00:00"
+  train_end_exclusive: "2024-03-04 00:00:00"
+  validation_end_exclusive: "2024-03-18 00:00:00"
+  observation_end_exclusive: "2024-04-01 00:00:00"
+
 datasets:
   yellow_taxi_trips:
     current_schema_version: 1

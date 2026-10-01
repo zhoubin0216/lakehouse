@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import time
 import os
 import sys
@@ -91,6 +92,91 @@ def validate_config(config: dict) -> None:
     validate_data_products_config(config)
     validate_monitoring_config(config)
     validate_evaluation_config(config)
+    validate_machine_learning_config(config)
+
+
+def validate_machine_learning_config(config: dict) -> None:
+    """Validate the optional Week 4 training-dataset contract."""
+    machine_learning = config.get("machine_learning")
+    if machine_learning is None:
+        return
+    if not isinstance(machine_learning, dict):
+        raise ValueError("machine_learning must be a YAML mapping")
+
+    required_strings = (
+        "prediction_task",
+        "source_table",
+        "training_dataset_table",
+        "prepared_dataset_table",
+        "feature_pipeline_model_path",
+        "label_column",
+        "features_column",
+        "observation_start",
+        "train_end_exclusive",
+        "validation_end_exclusive",
+        "observation_end_exclusive",
+    )
+    for key in required_strings:
+        value = machine_learning.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"machine_learning.{key} must be a non-empty string")
+
+    timestamp_keys = (
+        "observation_start",
+        "train_end_exclusive",
+        "validation_end_exclusive",
+        "observation_end_exclusive",
+    )
+    try:
+        timestamps = [
+            datetime.fromisoformat(machine_learning[key])
+            for key in timestamp_keys
+        ]
+    except ValueError as exc:
+        raise ValueError(
+            "machine_learning time boundaries must be ISO-8601 timestamps"
+        ) from exc
+    if timestamps != sorted(timestamps) or len(set(timestamps)) != len(timestamps):
+        raise ValueError(
+            "machine_learning time boundaries must satisfy "
+            "observation_start < train_end_exclusive < "
+            "validation_end_exclusive < observation_end_exclusive"
+        )
+
+    partitions = machine_learning.get("output_partitions", [])
+    if not isinstance(partitions, list) or not all(
+        isinstance(column, str) and column.strip()
+        for column in partitions
+    ):
+        raise ValueError(
+            "machine_learning.output_partitions must be a list of column names"
+        )
+
+    feature_lists = (
+        "categorical_features",
+        "numerical_features",
+        "output_metadata_columns",
+    )
+    for key in feature_lists:
+        values = machine_learning.get(key)
+        if not isinstance(values, list) or not values or not all(
+            isinstance(column, str) and column.strip()
+            for column in values
+        ):
+            raise ValueError(
+                f"machine_learning.{key} must be a non-empty list of column names"
+            )
+        if len(values) != len(set(values)):
+            raise ValueError(f"machine_learning.{key} must not contain duplicates")
+
+    overlap = set(machine_learning["categorical_features"]) & set(
+        machine_learning["numerical_features"]
+    )
+    if overlap:
+        raise ValueError(
+            "machine_learning categorical and numerical features must not overlap: "
+            f"{sorted(overlap)}"
+        )
 
 
 def validate_evaluation_config(config: dict) -> None:

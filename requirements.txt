@@ -1,4 +1,6 @@
 pyspark>=3.5,<4.0
 delta-spark>=3.2,<4.0
+numpy>=1.26,<2.0
+setuptools>=68
 pyyaml>=6.0
 pytest>=8.0

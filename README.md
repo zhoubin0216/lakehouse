@@ -1,8 +1,171 @@
-# Urban Data Lakehouse (Weeks 1-3)
+# Urban Data Lakehouse (Weeks 1-4)
 
 Course project for ID2221. Week 1 builds the reusable Delta Lake integration
 platform; Week 2 adds Spark SQL analytics, controlled optimization experiments,
-reusable analytical products, and a standalone HTML report.
+reusable analytical products, and a standalone HTML report. Week 3 adds
+incremental processing, schema evolution, validation, and monitoring. Week 4
+uses the integrated platform for reproducible Spark ML workflows.
+
+## Week 4: Machine-Learning Dataset and Feature Pipeline (Tasks 1-2)
+
+Generate the chronological zone-hour taxi-demand dataset, then fit the feature
+pipeline on the training split and transform all three splits:
+
+```bash
+python -m src.machine_learning.training_dataset
+python -m src.machine_learning.feature_pipeline
+```
+
+The first command writes `ml/hourly_taxi_demand`. The second creates the
+model-ready `ml/hourly_taxi_demand_prepared` Delta table and saves the fitted
+Spark `PipelineModel` under `ml/models/hourly_taxi_demand_features`. Paths,
+feature lists, and time boundaries are controlled by `configs/config.yaml`.
+
+Implementation, commands, data contracts, feature rationale, assumptions, and
+reproducible results: [docs/week4_task1_2.md](docs/week4_task1_2.md).
+
+### Week 4 partner interface
+
+The interfaces below are the stable handoff to the model-training and
+comparison tasks. Paths are relative to `paths.lakehouse` in
+`configs/config.yaml`.
+
+| Artifact | Config key | Default path | Consumer |
+|---|---|---|---|
+| Integrated trip source | `source_table` | `integrated/integrated_taxi_trips` | Task 1 |
+| Zone-hour training dataset | `training_dataset_table` | `ml/hourly_taxi_demand` | Task 2 and Approach B |
+| Model-ready dataset | `prepared_dataset_table` | `ml/hourly_taxi_demand_prepared` | Task 3 |
+| Fitted feature transformer | `feature_pipeline_model_path` | `ml/models/hourly_taxi_demand_features` | Retraining and inference |
+
+Task 1 exposes two Python interfaces:
+
+```python
+from src.machine_learning.training_dataset import (
+    build_training_dataset,
+    hourly_taxi_demand_dataset,
+)
+
+# Pure DataFrame transformation; useful for tests and the Approach A/B comparison.
+dataset = hourly_taxi_demand_dataset(
+    integrated_dataframe,
+    config["machine_learning"],
+)
+
+# Delta I/O wrapper; reads source_table and overwrites training_dataset_table.
+dataset = build_training_dataset(spark, config)
+```
+
+`hourly_taxi_demand_dataset` expects the integrated trip-grain fields used by
+the configured location, weather, and air-quality features. It returns one row
+per `pickup_hour + pickup_location_id`, including zero-demand rows. Its stable
+key and control columns are:
+
+| Column | Spark type | Contract |
+|---|---|---|
+| `pickup_hour` | timestamp / timestamp_ntz | Start of the local demand hour |
+| `pickup_location_id` | integer | Taxi-zone identifier |
+| `demand` | long | Non-negative pickup count and Task 3 label |
+| `split` | string | Exactly `train`, `validation`, or `test` |
+
+The remaining Task 1 columns are unencoded feature inputs. Task 4 Approach A
+must produce this same schema and grain before applying the shared Task 2
+pipeline; otherwise its comparison with Approach B is not valid.
+
+Task 2 exposes four Python interfaces:
+
+```python
+from src.machine_learning.feature_pipeline import (
+    build_feature_pipeline,
+    fit_feature_pipeline,
+    prepare_feature_dataset,
+    transform_feature_dataset,
+)
+
+# Create an unfitted Spark Pipeline from the configured feature lists.
+pipeline = build_feature_pipeline(config)
+
+# Fits imputation, scaling, and category state on split == "train" only.
+feature_model = fit_feature_pipeline(task1_dataset, config)
+
+# Applies an already fitted model and returns only model-facing columns.
+prepared = transform_feature_dataset(task1_dataset, feature_model, config)
+
+# End-to-end Delta wrapper: fit, save the PipelineModel, transform, and write.
+prepared, feature_model = prepare_feature_dataset(spark, config)
+```
+
+The `prepared_dataset_table` schema is intentionally small and stable:
+
+```text
+pickup_hour         timestamp/timestamp_ntz  evaluation metadata
+pickup_location_id  integer                  evaluation metadata
+demand              long                     label
+split               string                   chronological split
+features            vector                   352-element model input
+```
+
+Task 3 can train directly from that table:
+
+```python
+from src.common import read_delta, table_path
+
+ml = config["machine_learning"]
+prepared = read_delta(spark, table_path(config, ml["prepared_dataset_table"]))
+
+train = prepared.filter("split = 'train'")
+validation = prepared.filter("split = 'validation'")
+test = prepared.filter("split = 'test'")
+
+# Configure the selected regressor with:
+# featuresCol = ml["features_column"]   # "features"
+# labelCol = ml["label_column"]         # "demand"
+```
+
+Load the saved feature transformer only when raw Task 1 rows need to be
+transformed again:
+
+```python
+from pyspark.ml import PipelineModel
+from src.common import table_path
+from src.machine_learning.feature_pipeline import transform_feature_dataset
+
+model_path = table_path(config, ml["feature_pipeline_model_path"])
+feature_model = PipelineModel.load(model_path)
+new_prepared_rows = transform_feature_dataset(
+    new_task1_rows,
+    feature_model,
+    config,
+)
+```
+
+Do not refit preprocessing on validation or test data, create a new random
+split, or apply the feature transformer to the already prepared table. The
+saved model expects the unencoded Task 1 schema.
+
+### Adding features and retraining
+
+- For an existing source column, add its name to either
+  `categorical_features` or `numerical_features` in `configs/config.yaml`.
+- For a derived feature, update `TEMPORAL_FEATURE_STATEMENT` and
+  `DERIVED_FEATURE_COLUMNS` in
+  `src/machine_learning/feature_pipeline.py`, then add it to the appropriate
+  configured feature list.
+- Do not place a column in both configured lists. Configuration validation
+  rejects duplicates and overlaps.
+- Numerical features must contain at least one non-null training value so the
+  median can be learned. The baseline excludes all-null `snow_depth_mm` and
+  `wind_gust_kmh` for this reason.
+- After an integrated-data refresh, rerun the Task 1 command followed by the
+  Task 2 command. Both Delta outputs and the fitted feature model are
+  deterministically overwritten.
+
+The current reproducible output contains 396,144 training rows, 87,770
+validation rows, and 88,032 test rows. Run all regression tests before handing
+changes to another task:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/pytest -q -p no:cacheprovider
+```
 
 ## Week 3: Incremental Updates (Tasks 1-2)
 
