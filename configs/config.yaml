@@ -54,6 +54,14 @@ machine_learning:
   features_column: features
   output_partitions: [split]
 
+  training:
+    runs_root: ml/runs
+    seed: 2221
+    num_trees: 20
+    max_depth: 8
+    max_bins: 32
+    fit_partitions: 4
+
   categorical_features:
     - pickup_location_id
     - pickup_borough

@@ -178,6 +178,35 @@ def validate_machine_learning_config(config: dict) -> None:
             f"{sorted(overlap)}"
         )
 
+    forbidden = {machine_learning["label_column"], "split", "prediction"}
+    features = set(machine_learning["categorical_features"]) | set(
+        machine_learning["numerical_features"]
+    )
+    if forbidden & features:
+        raise ValueError("ML features must not include the label, split or prediction")
+
+    training = machine_learning.get("training")
+    if training is not None:
+        if not isinstance(training, dict):
+            raise ValueError("machine_learning.training must be a mapping")
+        root = training.get("runs_root")
+        if not isinstance(root, str) or not root.strip():
+            raise ValueError("machine_learning.training.runs_root must be a non-empty path")
+        ranges = {
+            "seed": (0, 2147483647),
+            "num_trees": (1, None),
+            "max_depth": (1, 30),
+            "max_bins": (2, None),
+            "fit_partitions": (1, None),
+        }
+        for key, (minimum, maximum) in ranges.items():
+            value = training.get(key)
+            if (
+                isinstance(value, bool) or not isinstance(value, int)
+                or value < minimum or (maximum is not None and value > maximum)
+            ):
+                raise ValueError(f"Invalid machine_learning.training.{key}: {value}")
+
 
 def validate_evaluation_config(config: dict) -> None:
     """Validate optional Week 3 production-evaluation settings."""
