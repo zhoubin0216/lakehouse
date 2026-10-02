@@ -6,7 +6,37 @@ reusable analytical products, and a standalone HTML report. Week 3 adds
 incremental processing, schema evolution, validation, and monitoring. Week 4
 uses the integrated platform for reproducible Spark ML workflows.
 
-## Week 4: Machine-Learning Dataset and Feature Pipeline (Tasks 1-2)
+## Week 4: Machine-Learning Pipeline (Tasks 1-3)
+
+Task 3 trains and evaluates a Spark MLlib random-forest regressor using the
+Task 2 feature pipeline. To build a run-local Task 1 dataset from integrated
+Delta and train in one command:
+
+```bash
+python -m pip install -r requirements.txt
+python -m src.machine_learning.training --rebuild-dataset
+```
+
+When the Task 1 table already exists, omit `--rebuild-dataset` to use it:
+
+```bash
+python -m src.machine_learning.training
+```
+
+Each run writes `ml/runs/<run_id>/` with a complete feature-and-regression
+`PipelineModel`, predictions, metrics, configuration, code snapshot and pinned
+input Delta version. Only `run.json` with `status: complete` is ready for use.
+Both preprocessing and regression fit on `train` only; validation and test are
+evaluated separately against a training-mean baseline. Task 3 does not require
+or overwrite the standalone Task 2 prepared table/model.
+
+For retraining, update the observation/split boundaries as needed and rerun
+with `--rebuild-dataset`; every run keeps a separate model. The default window
+remains Q1 2024, so new dates outside it are not automatically included.
+Run details, inference, reproducibility and Task 3 discussion:
+[docs/week4_task3.md](docs/week4_task3.md).
+
+### Standalone Task 1 and Task 2 commands
 
 Generate the chronological zone-hour taxi-demand dataset, then fit the feature
 pipeline on the training split and transform all three splits:
@@ -104,7 +134,10 @@ split               string                   chronological split
 features            vector                   352-element model input
 ```
 
-Task 3 can train directly from that table:
+The prepared table remains available to alternative Task 3 experiments.
+The implemented Task 3 entry point instead consumes the unencoded Task 1 table
+and fits the full feature-and-regression pipeline, ensuring its saved model
+contains the exact preprocessing used during training:
 
 ```python
 from src.common import read_delta, table_path
