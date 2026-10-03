@@ -200,6 +200,159 @@ changes to another task:
 PYTHONDONTWRITEBYTECODE=1 .venv/bin/pytest -q -p no:cacheprovider
 ```
 
+## Week 4: Task 4 - Evaluate the Role of Data Engineering
+
+Task 4 compares two workflows for building the same hourly taxi-demand training
+dataset and training the same Spark MLlib model.
+
+- **Approach A** starts directly from the original Taxi Trips, Weather, Air
+  Quality, and Taxi Zone Lookup files. It performs the required loading,
+  validation, cleaning, aggregation, integration, and feature preparation inside
+  the Task 4 comparison workflow.
+- **Approach B** starts from the integrated Delta table produced by Weeks 1-3 and
+  reuses the existing platform outputs before applying the same Task 1 dataset
+  construction and Task 2 feature pipeline.
+
+Both approaches use:
+
+- the same `hourly_taxi_demand_dataset(...)` function,
+- the same Task 2 feature pipeline,
+- the same chronological train/validation/test splits,
+- the same Spark MLlib `RandomForestRegressor`,
+- the same model configuration as Task 3.
+
+The comparison is intended to isolate the effect of the data-engineering
+platform rather than compare different ML implementations.
+
+### Run the comparison
+
+From the project root:
+
+```bash
+python -m src.machine_learning.task4_comparison --repeats 3 --exact-check
+```
+
+The experiment uses three paired repetitions and alternates execution order
+between the two approaches to reduce systematic first-run effects.
+
+`--exact-check` additionally verifies that the generated Task 1 datasets are
+equivalent before interpreting the timing comparison.
+
+### Output
+
+Each execution creates a timestamped directory under:
+
+```text
+data/evaluation/week4/task4_comparison/<run_id>/
+```
+
+with:
+
+```text
+comparison_runs.csv
+comparison_summary.json
+demand_difference.csv
+demand_difference_summary.json
+context_feature_differences.csv
+context_feature_difference_summary.json
+```
+
+`comparison_runs.csv` contains the per-repeat timing measurements.
+
+`comparison_summary.json` contains:
+
+- implementation-complexity evidence,
+- dataset-equivalence checks,
+- reproducibility evidence,
+- median preparation, feature-engineering, training, and total workflow times.
+
+The difference files are diagnostic evidence showing whether the two approaches
+produce different target values or contextual features.
+
+### Dataset-equivalence validation
+
+The final comparison produced the same Task 1 dataset structure for both
+approaches:
+
+```text
+total rows       571,946
+train rows       396,144
+validation rows   87,770
+test rows         88,032
+distinct zones       262
+demand sum      9,551,225
+```
+
+All zone-hour demand values were identical between the two workflows.
+
+The strict row-level comparison reports a difference only for
+`pm25_avg_ug_m3`. This is caused by floating-point aggregation order in Spark:
+the maximum absolute difference is approximately `7.11e-15`.
+
+Task 4 therefore also performs a numerical-equivalence check using absolute and
+relative tolerances of `1e-9`. Under this tolerance:
+
+```text
+numerically_equal = true
+tolerant_mismatch_rows = 0
+semantic_total_cell_mismatches = 0
+```
+
+The two training datasets are therefore treated as numerically equivalent.
+
+### Final timing results
+
+The reported values are medians over three repetitions:
+
+| Metric | Approach A | Approach B |
+|---|---:|---:|
+| Data preparation | 58.36 s | 3.84 s |
+| Feature engineering | 3.15 s | 2.46 s |
+| Model training | 7.96 s | 7.61 s |
+| Total workflow | 70.86 s | 14.63 s |
+
+Approach A requires four original input sources and thirteen explicit
+preprocessing stages, while Approach B reads one pre-integrated Delta source and
+requires three explicit stages.
+
+The main benefit of the data platform appears before model fitting. Approach B
+reduces median data-preparation time by approximately **93.4%** and median total
+workflow time by approximately **79.4%**. Model-training time remains similar
+because both workflows ultimately train the same model on the same
+numerically-equivalent feature dataset.
+
+### Reproducibility
+
+The comparison uses configuration-controlled input paths, feature definitions,
+chronological split boundaries, and model parameters.
+
+Approach B additionally benefits from the Weeks 1-3 platform contracts:
+validation, cleaning, schema handling, and integration are performed centrally
+before the ML workflow starts. This reduces duplicated task-specific
+preprocessing code and makes the ML workflow easier to reproduce and maintain.
+
+The Task 2 feature transformer is fitted on the training split only. Validation
+and test rows are transformed using the fitted preprocessing state, avoiding
+data leakage.
+
+The Random Forest training configuration is aligned with Task 3, including the
+configured seed, tree parameters, partition count, and deterministic
+partitioning by `pickup_hour` and `pickup_location_id`.
+
+### Interpretation
+
+The experiment shows that the main contribution of the data-engineering
+platform is not faster Random Forest fitting. Instead, the platform moves
+reusable ingestion, validation, cleaning, and integration work out of the ML
+workflow.
+
+As a result, a new ML workflow can start from a stable integrated Delta table
+instead of rebuilding the same data preparation logic from four original
+datasets. This reduces implementation complexity, preprocessing time, and the
+amount of duplicated code while preserving the same model-ready data.
+
+
+
 ## Week 3: Incremental Updates (Tasks 1-2)
 
 After the initial raw, normal and integrated tables have been built:
